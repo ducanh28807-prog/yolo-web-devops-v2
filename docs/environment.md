@@ -11,4 +11,6 @@
 - **Socket Path**: `/run/user/1000/podman/podman.sock`
 - **Environment Variable**: `DOCKER_HOST="unix:///run/user/$UID/podman/podman.sock"`
 - **Verification**: `docker info` truy vấn thành công cgroup v2 và systemd manager
-- **Memory**: 8GB allocated for VM
+
+## Hardware Resources
+- **Memory**: 16GB Host RAM (8GB allocated for VM)
