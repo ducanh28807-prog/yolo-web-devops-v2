@@ -6,7 +6,7 @@ import {
 import axios from 'axios';
 
 // Tự động nhận diện host (localhost hoặc IP máy ảo) để trỏ về cổng backend 8000
-const API_BASE = `http://${window.location.hostname}:8000`;
+const API_BASE = "";
 
 function App() {
   const [activeTab, setActiveTab] = useState('image'); // 'image' hoặc 'video'
