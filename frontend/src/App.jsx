@@ -6,7 +6,7 @@ import {
 import axios from 'axios';
 
 // Tự động nhận diện host (localhost hoặc IP máy ảo) để trỏ về cổng backend 8000
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 function App() {
   const [activeTab, setActiveTab] = useState('image'); // 'image' hoặc 'video'
