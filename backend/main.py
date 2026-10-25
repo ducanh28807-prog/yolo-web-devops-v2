@@ -107,16 +107,18 @@ async def structured_logging_middleware(request: Request, call_next):
 
 # 3. Exception Handler tùy biến: trả mã lỗi đính kèm request_id mà không làm gãy test
 @app.exception_handler(HTTPException)
-async def custom_http_exception_handler(request: Request, exc: HTTPException):
-    request_id = getattr(request.state, "request_id", "unknown")
-    logger.warning(f"HTTP_EXCEPTION [{request_id}] - Status {exc.status_code}: {exc.detail}")
+async def http_exception_handler(request: Request, exc: HTTPException):
+    req_id = getattr(request.state, "request_id", "req-unknown")
+    logger.warning(f"HTTP_EXCEPTION [{req_id}] - Status {exc.status_code}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "detail": exc.detail,
-            "request_id": request_id
-        },
-        headers={"X-Request-ID": request_id}
+        content={"detail": exc.detail, "request_id": req_id},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "X-Request-ID": req_id
+        }
     )
 
 @app.get("/health", status_code=status.HTTP_200_OK)
