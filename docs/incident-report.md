@@ -11,7 +11,7 @@
 
 ## 1. Triệu Chứng Sự Cố (Symptoms)
 
-Khi người dùng thực hiện tải lên một tệp tin sai định dạng (ví dụ ảnh `.webp` hoặc tài liệu Markdown `.md` thay vì `.jpg`/`.png`):
+Khi người dùng thực hiện tải lên một tệp tin sai định dạng (ví dụ ảnh `.webp` hoặc tài liệu Markdown `.md` thay vì `.png`/`.png`):
 1. **Giao diện người dùng (UI):** Thay vì hiển thị thông báo nghiệp vụ từ server ("Tệp tải lên không được hỗ trợ..."), màn hình lại quăng ra banner lỗi kết nối mặc định:
    > `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`
 2. Mã định danh truy vết `request_id` bị rỗng (`N/A`), khiến kỹ sư trực vận hành không thể dùng mã này để tìm kiếm log tương ứng trên Render.
@@ -29,7 +29,7 @@ Trong những lần kiểm tra ban đầu khi container backend đang được k
 * Trình duyệt gửi request tới `/health` và `/api/detect/image` nhưng nhận về mã phản hồi `502 Bad Gateway` từ proxy của Cloudflare/Render.
 * Do trang lỗi 502 của proxy hạ tầng không chứa cấu hình CORS của ứng dụng, DevTools Console xuất hiện hàng loạt cảnh báo đỏ: `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`.
 
-![Tab Network ghi nhận lỗi 502 Bad Gateway từ hạ tầng Render](images/Screenshot_2026-10-25_210459.jpg)
+![Tab Network ghi nhận lỗi 502 Bad Gateway từ hạ tầng Render](images/Screenshot_2026-10-25_210459.png)
 ![Console ghi nhận lỗi CORS phát sinh từ phản hồi 502](images/Screenshot_2026-10-25_211239.png)
 
 ### B. Tầng Backend API (Khi Server đã ONLINE)
@@ -38,8 +38,8 @@ Sau khi container backend khởi động hoàn tất (`GET /health` trả về `
 * Console ghi nhận: Backend đã nhận được request và **từ chối hợp lệ bằng mã `400 (Bad Request)`**.
 * Tuy nhiên, giao diện vẫn tiếp tục báo lỗi `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`.
 
-![Console xác nhận Server phản hồi mã 400 Bad Request liên tục](images/Screenshot_2026-10-25_222842.jpg)
-![Thử nghiệm tải tệp .md cũng trả mã 400 nhưng UI vẫn báo N/A](images/Screenshot_2026-10-25_212305.jpg)
+![Console xác nhận Server phản hồi mã 400 Bad Request liên tục](images/Screenshot_2026-10-25_222842.png)
+![Thử nghiệm tải tệp .md cũng trả mã 400 nhưng UI vẫn báo N/A](images/Screenshot_2026-10-25_212305.png)
 
 ### C. Tầng Git & Đồng bộ Triển khai (Deployment Divergence)
 Kiểm tra lịch sử Git trên GitHub phát hiện:
