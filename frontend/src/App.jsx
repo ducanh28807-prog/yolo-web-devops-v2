@@ -58,7 +58,11 @@ export default function App() {
           if (errData && errData.detail) {
             errMessage = errData.detail;
           }
-        } catch (_) {}
+        } catch (_) {
+    const errorDetail = _.response?.data?.detail || "Đã xảy ra lỗi khi kết nối máy chủ.";
+    const reqId = _.response?.data?.request_id || _.response?.headers?.["x-request-id"] || "N/A";
+    setError(`${errorDetail} (Mã yêu cầu: ${reqId})`);
+  }
         throw new Error(errMessage);
       }
 
@@ -76,8 +80,10 @@ export default function App() {
         });
       }
     } catch (err) {
-      setError(err.message);
-    } finally {
+    const errorDetail = err.response?.data?.detail || "Đã xảy ra lỗi khi kết nối máy chủ.";
+    const reqId = err.response?.data?.request_id || err.response?.headers?.["x-request-id"] || "N/A";
+    setError(`${errorDetail} (Mã yêu cầu: ${reqId})`);
+  } finally {
       setLoading(false);
     }
   };
