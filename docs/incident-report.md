@@ -1,63 +1,80 @@
 
 # Báo Cáo Bài Tập Xử Lý Sự Cố (Incident Exercise Report)
 
-* **Mã sự cố (Incident ID):** INC-20261025-CORS-REQID
-* **Thời gian xảy ra:** 25/10/2026
-* **Hệ thống ảnh hưởng:** Backend API (FastAPI) & Frontend UI (React + Vite)
-* **Mức độ nghiêm trọng:** Medium (Chức năng cốt lõi vẫn chạy, nhưng trải nghiệm báo lỗi bị gián đoạn và mất khả năng truy vết log từ phía người dùng).
-* **Người thực hiện:** Đội ngũ phát triển DevOps
+* **Mã sự cố (Incident ID):** INC-20261025-CORS-CORRELATION
+* **Thời gian ghi nhận:** 25/10/2026
+* **Hệ thống ảnh hưởng:** YOLO Web Platform (Backend API FastAPI trên Render & Frontend React trên Render)
+* **Mức độ ảnh hưởng:** Medium – Chức năng nhận diện lõi không chết hoàn toàn, nhưng cơ chế thông báo lỗi bị gãy đổ: người dùng nhận thông báo lỗi giả (kết nối thất bại) và mã `request_id` bị mất (`N/A`), làm mất khả năng đối soát log giữa Client và Server.
+* **Kỹ sư phụ trách:** Nguyễn Đức Anh
 
 ---
 
-## 1. Triệu Chứng (Symptoms)
+## 1. Triệu Chứng Sự Cố (Symptoms)
 
-* Người dùng tải lên một tệp tin hình ảnh có định dạng không được hỗ trợ (`.webp`) để thử nghiệm cơ chế kiểm tra tính hợp lệ (validation).
-* **Hiện tượng tại giao diện:** Màn hình hiển thị banner cảnh báo chung chung:
-  `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`
-* Giá trị định danh truy vết (`request_id`) bị hiển thị thành `N/A`, khiến người dùng không thể cung cấp mã hỗ trợ và kỹ sư không thể tra cứu log tương ứng trên hệ thống giám sát.
+Khi người dùng thực hiện tải lên một tệp tin sai định dạng (ví dụ ảnh `.webp` hoặc tài liệu Markdown `.md` thay vì `.jpg`/`.png`):
+1. **Giao diện người dùng (UI):** Thay vì hiển thị thông báo nghiệp vụ từ server ("Tệp tải lên không được hỗ trợ..."), màn hình lại quăng ra banner lỗi kết nối mặc định:
+   > `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`
+2. Mã định danh truy vết `request_id` bị rỗng (`N/A`), khiến kỹ sư trực vận hành không thể dùng mã này để tìm kiếm log tương ứng trên Render.
+
+![Triệu chứng giao diện báo lỗi kết nối và mã yêu cầu N/A](images/Screenshot_2026-10-25_204241.png)
 
 ---
 
-## 2. Bằng Chứng Thu Thập (Evidence Collected)
+## 2. Nhật Ký Thu Thập Bằng Chứng (Evidence Collected)
 
-1. **Tab Console (Trình duyệt):**
-   * Xuất hiện thông báo chặn bảo mật từ trình duyệt:  
-     `Access to fetch at 'https://yolo-backend-cupu.onrender.com/api/detect/image' from origin 'https://yolo-frontend-ulf0.onrender.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`
-   * Kèm theo lỗi mạng: `POST ... net::ERR_FAILED 502 (Bad Gateway)` (trong pha khởi động lại) và `POST ... 400 (Bad Request)`.
+Quá trình điều tra bằng chứng được thực hiện qua các tầng hệ thống theo đúng quy trình gỡ lỗi:
 
-2. **Server Logs (Render Dashboard):**
-   * Backend vẫn nhận được request và xử lý logic bắt lỗi nghiệp vụ rất chính xác:
-     ```text
-     2026-10-25 15:24:52 [WARNING] [yolo-api] HTTP_EXCEPTION [req-b4b714b1] - Status 400: Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG.
-     2026-10-25 15:24:52 [WARNING] [yolo-api] REQUEST_CLIENT_ERROR: {"request_id": "req-b4b714b1", "method": "POST", "route": "/api/detect/image", "status": 400, "latency_ms": 10.02}
-     ```
-   * Như vậy, backend **thực sự đã sinh mã `req-b4b714b1`**, nhưng thông tin này không tới được người dùng.
+### A. Tầng Gateway & Hiện tượng Cold Start (Render Free Tier)
+Trong những lần kiểm tra ban đầu khi container backend đang được khởi động lại hoặc kéo image mới:
+* Trình duyệt gửi request tới `/health` và `/api/detect/image` nhưng nhận về mã phản hồi `502 Bad Gateway` từ proxy của Cloudflare/Render.
+* Do trang lỗi 502 của proxy hạ tầng không chứa cấu hình CORS của ứng dụng, DevTools Console xuất hiện hàng loạt cảnh báo đỏ: `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`.
 
-3. **Tab Network (Chrome DevTools):**
-   * Gói tin phản hồi `400 Bad Request` ban đầu bị thiếu header `Access-Control-Allow-Origin`. Do đó, trình duyệt từ chối cho phép JavaScript đọc nội dung JSON phản hồi.
+![Tab Network ghi nhận lỗi 502 Bad Gateway từ hạ tầng Render](images/Screenshot_2026-10-25_210459.jpg)
+![Console ghi nhận lỗi CORS phát sinh từ phản hồi 502](images/Screenshot_2026-10-25_211239.png)
+
+### B. Tầng Backend API (Khi Server đã ONLINE)
+Sau khi container backend khởi động hoàn tất (`GET /health` trả về `200 OK`):
+* Người dùng tiếp tục gửi tệp sai định dạng. 
+* Console ghi nhận: Backend đã nhận được request và **từ chối hợp lệ bằng mã `400 (Bad Request)`**.
+* Tuy nhiên, giao diện vẫn tiếp tục báo lỗi `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`.
+
+![Console xác nhận Server phản hồi mã 400 Bad Request liên tục](images/Screenshot_2026-10-25_222842.jpg)
+![Thử nghiệm tải tệp .md cũng trả mã 400 nhưng UI vẫn báo N/A](images/Screenshot_2026-10-25_212305.jpg)
+
+### C. Tầng Git & Đồng bộ Triển khai (Deployment Divergence)
+Kiểm tra lịch sử Git trên GitHub phát hiện:
+* Nhánh `main` trên GitHub đã được gộp PR #18 (`c35a88b`), nhưng máy trạm local chưa thực hiện `git pull` đồng bộ. 
+* Các bản vá cục bộ bị phân nhánh so với remote, dẫn đến việc container Render chưa nạp đúng bản build mới nhất của mã nguồn.
+
+![Lịch sử commit trên GitHub xác nhận tình trạng phân nhánh merge](images/Screenshot_2026-10-25_221444.png)
 
 ---
 
 ## 3. Phân Tích Nguyên Nhân Gốc Rễ (Root Cause Analysis - RCA)
 
-Sự cố bắt nguồn từ **lỗi kép** ở cả hai tầng Backend và Frontend:
+Sự cố "N/A Request ID" là hệ quả của **lỗi kép** giữa Backend và Frontend:
 
-1. **Nguyên nhân tại Backend (CORS on Exception):**
-   * FastAPI sử dụng `CORSMiddleware` cho các phản hồi thông thường. Tuy nhiên, khi một ngoại lệ `HTTPException` được kích hoạt, hàm xử lý ngoại lệ tùy biến (`custom_http_exception_handler`) ban đầu chỉ trả về `JSONResponse` chứa header `X-Request-ID` mà **không đính kèm các header CORS**.
-   * Hệ quả: Khi trả về mã lỗi 400, trình duyệt coi đây là vi phạm chính sách cùng nguồn gốc (Same-Origin Policy) và chặn hoàn toàn không cho mã client đọc body.
+1. **Nguyên nhân tại Backend (FastAPI Exception Handler thiếu CORS Headers):**
+   * Trong FastAPI, middleware CORS thông thường (`CORSMiddleware`) có thể không tự động bọc các phản hồi sinh ra từ `StarletteHTTPException` hoặc `HTTPException`.
+   * Hàm bắt ngoại lệ tùy biến ban đầu chỉ trả về `JSONResponse` kèm header `X-Request-ID`, hoàn toàn thiếu các header:
+     * `Access-Control-Allow-Origin`
+     * `Access-Control-Allow-Methods`
+     * `Access-Control-Allow-Headers`
+   * Do đó, dù backend trả về body JSON chứa lỗi 400 và `request_id`, trình duyệt Chrome phát hiện thiếu header CORS nên **chặn đứng gói tin**, không cho mã JavaScript đọc nội dung phản hồi.
 
-2. **Nguyên nhân tại Frontend (Sai lệch cấu trúc đối tượng lỗi):**
-   * Frontend sử dụng hàm `fetch()` của Web API tiêu chuẩn.
-   * Khi kiểm tra `!res.ok`, code bóc tách `errData = await res.json()`, nhưng sau đó lại ném ngoại lệ `throw new Error(...)`.
-   * Tại khối `catch (err)`, mã nguồn lại cố gắng truy cập `err.response?.data?.request_id` (vốn là cú pháp dành riêng cho thư viện Axios).
-   * Vì `err.response` là `undefined`, toán tử fallback `||` đã kích hoạt và gán giá trị `"N/A"`.
+2. **Nguyên nhân tại Frontend (Sai lệch cơ chế xử lý lỗi giữa Fetch API và Axios):**
+   * Frontend sử dụng hàm `fetch()` tiêu chuẩn của trình duyệt. Khi backend trả về mã `400`, `res.ok` mang giá trị `false`.
+   * Đoạn mã Frontend cố gắng ném ngoại lệ `throw new Error(...)`, và tại khối `catch (err)`, mã nguồn lại truy xuất `err.response?.data?.detail` và `err.response?.data?.request_id`.
+   * Đây là cấu trúc dữ liệu của thư viện **Axios**, không tồn tại trên đối tượng `Error` thuần của JavaScript.
+   * Kết quả: Biến `err.response` bị `undefined`, kích hoạt giá trị dự phòng mặc định (fallback): `"Đã xảy ra lỗi khi kết nối máy chủ"` và `"N/A"`.
 
 ---
 
-## 4. Giải Pháp Khắc Phục (Resolution & Fix)
+## 4. Các Bước Khắc Phục (Resolution & Fix)
 
-### Bước 1: Vá lỗi Backend (`backend/app/main.py`)
-Cập nhật `custom_http_exception_handler` để luôn đính kèm đầy đủ các header CORS cho mọi phản hồi lỗi:
+### Bước 1: Ép buộc đính kèm Header CORS tại Backend Exception Handler
+Tại `backend/app/main.py`, chuẩn hóa hàm xử lý `StarletteHTTPException` để luôn gửi trả toàn bộ header CORS:
+
 ```python
 @app.exception_handler(StarletteHTTPException)
 async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -76,11 +93,12 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
     )
 ```
 
-### Bước 2: Vá lỗi Frontend (`frontend/src/App.jsx`)
+### Bước 2: Chuẩn hóa bóc tách dữ liệu lỗi tại Frontend
 
-Sửa đổi logic xử lý phản hồi lỗi trực tiếp từ đối tượng `res` của `fetch()`:
+Tại `frontend/src/App.jsx`, xử lý phản hồi lỗi trực tiếp từ đối tượng `Response` của `fetch()` thay vì dựa vào khối `catch`:
 
-```javascript
+JavaScript
+```
 if (!res.ok) {
   let errDetail = `Lỗi ${res.status}: Xử lý thất bại.`;
   let reqId = res.headers.get('X-Request-ID') || "N/A";
@@ -90,7 +108,7 @@ if (!res.ok) {
     if (errData && errData.detail) errDetail = errData.detail;
     if (errData && errData.request_id) reqId = errData.request_id;
   } catch (_) {
-    // Phản hồi không phải JSON
+    // Phản hồi không phải định dạng JSON
   }
 
   setError(`${errDetail} (Mã yêu cầu: ${reqId})`);
@@ -98,22 +116,30 @@ if (!res.ok) {
 }
 ```
 
----
+### Bước 3: Đồng bộ Git và kích hoạt Render Deployment
 
-## 5. Kiểm Thử & Nghiệm Thu (Verification)
+- Thực hiện giải quyết phân nhánh Git bằng `git pull --rebase origin main`.
+- Đẩy mã nguồn thống nhất lên nhánh `main` để Render tự động build lại cả Frontend và Backend service.
 
-1. Tải lên tệp `c (2).webp` trên môi trường triển khai thực tế.
-2. Kiểm tra tab Network:
-* Response Headers xuất hiện: `access-control-allow-origin: https://yolo-frontend-ulf0.onrender.com` và `access-control-expose-headers: ..., X-Request-ID`.
-* Response Body trả về: `{"detail": "Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ...", "request_id": "req-d32f74bd"}`.
+## 5. Nghiệm Thu & Kiểm Thử Sau Bản Vá (Verification)
 
-3. Giao diện người dùng hiển thị chính xác:
-`Upload Error: Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG. (Mã yêu cầu: req-d32f74bd)`.
-4. Tìm kiếm chuỗi `req-d32f74bd` trong log backend của Render: Dòng log tương ứng được định vị tức thì.
+Sau khi bản vá được kích hoạt trên môi trường Cloud:
 
----
+1. **Kiểm tra Response Headers:** Gói tin trả lời mã `400 Bad Request` đã hiển thị đầy đủ các header cấp phép CORS cùng con dấu `X-Request-ID`:
+   - `Access-Control-Allow-Origin: https://yolo-frontend-ulf0.onrender.com`
+   - `Access-Control-Expose-Headers: ..., X-Request-ID`
 
-## 6. Biện Pháp Phòng Ngừa (Prevention & Lessons Learned)
+2) **Kiểm tra Response Payload & UI:**
+   - Trình duyệt đọc được chuỗi JSON:
 
-* **Tự động hóa kiểm thử (CI Test):** Bổ sung test case trong `pytest` để kiểm tra rằng mọi phản hồi lỗi (400, 404, 413, 500) đều phải chứa header `Access-Control-Allow-Origin` và `X-Request-ID`.
-* **Nhất quán thư viện HTTP:** Thống nhất việc sử dụng API Client (chọn thuần `fetch` hoặc chuẩn hóa bằng `axios`) trong toàn bộ mã nguồn Frontend để tránh giả định sai về cấu trúc đối tượng lỗi.
+     `{"detail": "Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ...", "request_id": "req-d32f74bd"}`
+   - Giao diện UI hiển thị chính xác thông báo chi tiết kèm mã yêu cầu thực tế:
+
+     `Upload Error: Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ... (Mã yêu cầu: req-d32f74bd)`.
+3) **Đối soát nhật ký (Correlation Match):** Tìm kiếm mã `req-d32f74bd` trong hệ thống log của Render, log hiển thị chính xác dòng cảnh báo tương ứng với độ trễ xử lý 10.02ms. Chu trình giám sát và gỡ lỗi khép kín thành công.
+
+## 6. Bài Học Kinh Nghiệm & Phòng Ngừa (Prevention)
+
+- **Kiểm thử tự động cho Exception:** Viết thêm test case trong `pytest` để kiểm tra rằng mọi phản hồi lỗi (400, 404, 422, 500) đều bắt buộc phải có header CORS và `X-Request-ID`.
+- **Thống nhất chuẩn HTTP Client:** Tuyệt đối không dùng lẫn lộn tư duy cú pháp giữa Fetch API và Axios trong cùng một dự án.
+- **Quy trình Git Flow nghiêm ngặt:** Luôn chạy `git pull` cập nhật nhánh `main` trước khi tạo commit mới để tránh xung đột hoặc lệch pha triển khai trên nền tảng Cloud.
