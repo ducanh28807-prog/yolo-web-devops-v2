@@ -1,408 +1,240 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Activity, ShieldCheck, Upload, Video, Image as ImageIcon, 
-  Sliders, Loader2, Clock, CheckCircle2, AlertCircle, FileText 
-} from 'lucide-react';
-import axios from 'axios';
 
-// Tự động nhận diện host (localhost hoặc IP máy ảo) để trỏ về cổng backend 8000
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
-function App() {
-  const [activeTab, setActiveTab] = useState('image'); // 'image' hoặc 'video'
-  const [backendStatus, setBackendStatus] = useState('Đang kiểm tra...');
-  const [isHealthy, setIsHealthy] = useState(false);
-  const [confThreshold, setConfThreshold] = useState(0.25);
+export default function App() {
+  const [activeTab, setActiveTab] = useState('image');
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [confidence, setConfidence] = useState(0.25);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [backendStatus, setBackendStatus] = useState('checking');
 
-  // State cho ảnh
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [imageResult, setImageResult] = useState(null);
-  const [isImageLoading, setIsImageLoading] = useState(false);
-
-  // State cho video
-  const [videoFile, setVideoFile] = useState(null);
-  const [videoPreview, setVideoPreview] = useState(null);
-  const [videoResultUrl, setVideoResultUrl] = useState(null);
-  const [videoSummary, setVideoSummary] = useState(null);
-  const [isVideoLoading, setIsVideoLoading] = useState(false);
-
-  const [errorMessage, setErrorMessage] = useState('');
-
-  // Kiểm tra sức khỏe Backend
   useEffect(() => {
-    axios.get(`${API_BASE}/health`)
-      .then(res => {
-        if (res.data.status === 'healthy') {
-          setBackendStatus('Kết nối thành công (Model sẵn sàng)');
-          setIsHealthy(true);
-        }
+    fetch(`${API_BASE}/health`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'healthy') setBackendStatus('online');
+        else setBackendStatus('error');
       })
-      .catch(() => {
-        setBackendStatus(`Không thể kết nối Backend (${API_BASE})`);
-        setIsHealthy(false);
-      });
+      .catch(() => setBackendStatus('offline'));
   }, []);
 
-  // Xử lý chọn ảnh
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
-      setImageResult(null);
-      setErrorMessage('');
+  const handleFileChange = (e) => {
+    const selected = e.target.files[0];
+    if (selected) {
+      setFile(selected);
+      setPreviewUrl(URL.createObjectURL(selected));
+      setResult(null);
+      setError(null);
     }
   };
 
-  // Gửi ảnh lên backend
-  const handleDetectImage = async () => {
-    if (!imageFile) return;
-    setIsImageLoading(true);
-    setErrorMessage('');
+  const handleDetect = async () => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
 
     const formData = new FormData();
-    formData.append('file', imageFile);
+    formData.append('file', file);
+
+    const endpoint = activeTab === 'image'
+      ? `${API_BASE}/api/detect/image?confidence=${confidence}`
+      : `${API_BASE}/api/detect/video?confidence=${confidence}`;
 
     try {
-      const response = await axios.post(
-        `${API_BASE}/api/detect/image?conf_threshold=${confThreshold}`, 
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      );
-      setImageResult(response.data);
-    } catch (err) {
-      setErrorMessage(err.response?.data?.detail || 'Lỗi khi gửi ảnh lên máy chủ.');
-    } finally {
-      setIsImageLoading(false);
-    }
-  };
-
-  // Xử lý chọn video
-  const handleVideoChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        setErrorMessage('File video vượt quá giới hạn 10MB!');
-        return;
-      }
-      setVideoFile(file);
-      setVideoPreview(URL.createObjectURL(file));
-      setVideoResultUrl(null);
-      setVideoSummary(null);
-      setErrorMessage('');
-    }
-  };
-
-  // Gửi video lên backend
-  const handleDetectVideo = async () => {
-    if (!videoFile) return;
-    setIsVideoLoading(true);
-    setErrorMessage('');
-
-    const formData = new FormData();
-    formData.append('file', videoFile);
-
-    try {
-      const response = await axios.post(
-        `${API_BASE}/api/detect/video?conf_threshold=${confThreshold}`,
-        formData,
-        { 
-          headers: { 'Content-Type': 'multipart/form-data' },
-          responseType: 'blob' 
-        }
-      );
-
-      // Lấy metadata từ header
-      const summaryHeader = response.headers['x-summary-counts'];
-      const inferenceTime = response.headers['x-inference-time-ms'];
-      
-      let summaryCounts = {};
-      if (summaryHeader) {
-        try { summaryCounts = JSON.parse(summaryHeader); } catch (_) {}
-      }
-
-      setVideoSummary({
-        timeMs: inferenceTime || 'N/A',
-        counts: summaryCounts
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
       });
 
-      // Tạo Blob URL để phát video trả về
-      const videoBlob = new Blob([response.data], { type: 'video/mp4' });
-      setVideoResultUrl(URL.createObjectURL(videoBlob));
+      if (!res.ok) {
+        let errMessage = `Error ${res.status}: Failed to process request.`;
+        try {
+          const errData = await res.json();
+          if (errData && errData.detail) {
+            errMessage = errData.detail;
+          }
+        } catch (_) {}
+        throw new Error(errMessage);
+      }
+
+      if (activeTab === 'image') {
+        const data = await res.json();
+        setResult(data);
+      } else {
+        const blob = await res.blob();
+        const videoUrl = URL.createObjectURL(blob);
+        setResult({
+          videoUrl,
+          total: res.headers.get('X-Total-Detections') || 'N/A',
+          classes: res.headers.get('X-Detected-Classes') || 'None',
+          duration: res.headers.get('X-Duration-Seconds') || 'N/A'
+        });
+      }
     } catch (err) {
-      setErrorMessage('Lỗi khi xử lý video. Hãy đảm bảo video dưới 10MB và đúng định dạng MP4.');
+      setError(err.message);
     } finally {
-      setIsVideoLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 flex flex-col items-center">
-      {/* Tiêu đề */}
-      <header className="max-w-5xl w-full text-center py-4 border-b border-slate-800">
-        <h1 className="text-3xl font-extrabold tracking-tight text-white mb-1">
-          YOLOv8 Detection Workspace
-        </h1>
-        <p className="text-slate-400 text-sm">
-          Giao diện kiểm thử hệ thống nhận diện đối tượng theo chuẩn luồng DevOps
-        </p>
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center p-6">
+      <header className="w-full max-w-4xl flex items-center justify-between pb-6 border-b border-slate-800">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+            🚀 YOLOv8 Vision Detection
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">DevOps Pipeline & Cloud Deployment Platform</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">Backend:</span>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+            backendStatus === 'online' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+            backendStatus === 'checking' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+            'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+          }`}>
+            {backendStatus.toUpperCase()}
+          </span>
+        </div>
       </header>
 
-      {/* Thanh trạng thái Server */}
-      <div className="max-w-5xl w-full mt-4 flex items-center justify-between px-4 py-2 bg-slate-900 rounded-lg border border-slate-800 text-xs">
-        <div className="flex items-center space-x-2">
-          <Activity className={`w-4 h-4 ${isHealthy ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-          <span className="text-slate-300">Backend:</span>
-          <span className={`font-semibold ${isHealthy ? 'text-emerald-400' : 'text-amber-400'}`}>{backendStatus}</span>
-        </div>
-        <div className="flex items-center space-x-1 text-slate-400">
-          <ShieldCheck className="w-4 h-4 text-indigo-400" />
-          <span>YOLOv8n CPU Engine</span>
-        </div>
-      </div>
-
-      {/* Điều khiển chung & Chuyển Tab */}
-      <div className="max-w-5xl w-full mt-6 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-        <div className="flex space-x-2">
+      <main className="w-full max-w-4xl mt-6 space-y-6">
+        {/* Tab Selection */}
+        <div className="flex bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 max-w-xs">
           <button
-            onClick={() => { setActiveTab('image'); setErrorMessage(''); }}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-              activeTab === 'image' 
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            onClick={() => { setActiveTab('image'); setFile(null); setPreviewUrl(null); setResult(null); setError(null); }}
+            className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${
+              activeTab === 'image' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
-            <ImageIcon className="w-4 h-4" />
-            <span>Nhận diện Ảnh</span>
+            Image
           </button>
-
           <button
-            onClick={() => { setActiveTab('video'); setErrorMessage(''); }}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-              activeTab === 'video' 
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            onClick={() => { setActiveTab('video'); setFile(null); setPreviewUrl(null); setResult(null); setError(null); }}
+            className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${
+              activeTab === 'video' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Video className="w-4 h-4" />
-            <span>Nhận diện Video</span>
+            Video
           </button>
         </div>
 
-        {/* Thanh trượt Confidence Threshold */}
-        <div className="flex items-center space-x-3 w-full md:w-auto px-2">
-          <Sliders className="w-4 h-4 text-indigo-400" />
-          <span className="text-xs text-slate-300 whitespace-nowrap">Độ tin cậy:</span>
-          <input 
-            type="range" 
-            min="0.1" 
-            max="0.9" 
-            step="0.05"
-            value={confThreshold}
-            onChange={(e) => setConfThreshold(parseFloat(e.target.value))}
-            className="w-32 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-          />
-          <span className="text-xs font-mono text-indigo-300 w-8">{confThreshold.toFixed(2)}</span>
-        </div>
-      </div>
+        {/* Upload Card */}
+        <div className="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-6 shadow-xl space-y-4">
+          <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-600 hover:border-indigo-500/60 rounded-xl p-8 bg-slate-900/40 transition-colors">
+            <input
+              type="file"
+              accept={activeTab === 'image' ? "image/png, image/jpeg, image/jpg" : "video/mp4"}
+              onChange={handleFileChange}
+              className="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
+            />
 
-      {/* Thông báo lỗi nếu có */}
-      {errorMessage && (
-        <div className="max-w-5xl w-full mt-4 p-3 bg-rose-950/60 border border-rose-800 rounded-lg flex items-center space-x-2 text-rose-300 text-xs">
-          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-          <span>{errorMessage}</span>
-        </div>
-      )}
-
-      {/* Nội dung Tab: IMAGE */}
-      {activeTab === 'image' && (
-        <main className="max-w-5xl w-full mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Cột trái: Tải ảnh */}
-          <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-                <Upload className="w-4 h-4 text-indigo-400" />
-                <span>Tải ảnh đầu vào</span>
-              </h2>
-
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-6 cursor-pointer bg-slate-950/50 transition">
-                {imagePreview ? (
-                  <img src={imagePreview} alt="Preview" className="max-h-64 object-contain rounded-lg" />
-                ) : (
-                  <div className="text-center">
-                    <ImageIcon className="w-10 h-10 text-slate-500 mx-auto mb-2" />
-                    <p className="text-xs text-slate-300">Nhấn để chọn hoặc kéo thả ảnh (JPG, PNG)</p>
-                  </div>
-                )}
-                <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-              </label>
-            </div>
-
-            <button
-              onClick={handleDetectImage}
-              disabled={!imageFile || isImageLoading}
-              className={`w-full mt-5 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center space-x-2 transition ${
-                !imageFile || isImageLoading
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30'
-              }`}
-            >
-              {isImageLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Đang phân tích ảnh...</span>
-                </>
+            {/* Rào trước quy định file upload */}
+            <div className="mt-4 text-center text-xs text-slate-400 bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700/80">
+              <span className="font-semibold text-slate-300">Giới hạn định dạng & dung lượng:</span>
+              {activeTab === 'image' ? (
+                <p className="mt-0.5 text-slate-400">
+                  Chỉ chấp nhận <span className="text-indigo-300 font-medium">JPG, JPEG, PNG</span> • Dung lượng tối đa <span className="text-indigo-300 font-medium">10 MB</span>
+                </p>
               ) : (
-                <span>Bắt đầu nhận diện</span>
+                <p className="mt-0.5 text-slate-400">
+                  Chỉ chấp nhận <span className="text-indigo-300 font-medium">MP4</span> • Dung lượng tối đa <span className="text-indigo-300 font-medium">5 MB</span> • Độ dài khuyến nghị <span className="text-indigo-300 font-medium">&le; 10 giây</span>
+                </p>
               )}
-            </button>
+            </div>
           </div>
 
-          {/* Cột phải: Kết quả ảnh */}
-          <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col">
-            <h2 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Kết quả nhận diện</span>
+          {/* Confidence Slider */}
+          <div className="flex items-center justify-between pt-2">
+            <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+              Confidence Threshold:
+              <span className="text-indigo-400 font-bold">{Math.round(confidence * 100)}%</span>
+            </label>
+            <input
+              type="range"
+              min="0.05"
+              max="0.95"
+              step="0.05"
+              value={confidence}
+              onChange={(e) => setConfidence(parseFloat(e.target.value))}
+              className="w-48 accent-indigo-500 cursor-pointer"
+            />
+          </div>
+
+          <button
+            onClick={handleDetect}
+            disabled={!file || loading}
+            className={`w-full py-2.5 rounded-xl font-semibold text-sm transition-all shadow-lg ${
+              !file || loading
+                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
+            }`}
+          >
+            {loading ? "Processing Inference..." : `Detect Objects in ${activeTab === 'image' ? 'Image' : 'Video'}`}
+          </button>
+        </div>
+
+        {/* User-facing Error State Banner */}
+        {error && (
+          <div className="bg-rose-500/10 border border-rose-500/40 rounded-xl p-4 flex items-start gap-3 text-rose-300">
+            <span className="text-lg">⚠️</span>
+            <div className="text-xs leading-relaxed">
+              <span className="font-semibold block text-rose-200 mb-0.5">Upload Error:</span>
+              {error}
+            </div>
+          </div>
+        )}
+
+        {/* Result Viewer */}
+        {result && (
+          <div className="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-6 shadow-xl space-y-4">
+            <h2 className="text-lg font-bold text-white flex items-center justify-between">
+              <span>Detection Results</span>
+              {activeTab === 'image' && (
+                <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30 font-medium">
+                  {result.count} object(s) found
+                </span>
+              )}
             </h2>
 
-            {imageResult ? (
-              <div className="flex-1 flex flex-col">
-                <div className="flex items-center space-x-4 mb-3 text-xs">
-                  <span className="flex items-center text-slate-300">
-                    <Clock className="w-3.5 h-3.5 mr-1 text-indigo-400" />
-                    {imageResult.inference_time_ms} ms
-                  </span>
-                  <span className="px-2 py-0.5 bg-indigo-950 text-indigo-300 border border-indigo-800 rounded-md font-mono">
-                    {imageResult.total_objects} vật thể
-                  </span>
+            {activeTab === 'image' ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400">Original</p>
+                  <img src={previewUrl} alt="Original" className="w-full rounded-xl border border-slate-700 object-contain max-h-80" />
                 </div>
-
-                <div className="bg-slate-950 rounded-xl p-2 flex items-center justify-center mb-4">
-                  <img src={imageResult.image_base64} alt="Detected" className="max-h-64 object-contain rounded-lg" />
-                </div>
-
-                {/* Bảng chi tiết detections */}
-                <div className="flex-1 overflow-y-auto max-h-40 border border-slate-800 rounded-lg p-2 bg-slate-950/40">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="text-slate-400 border-b border-slate-800">
-                        <th className="pb-1">Vật thể</th>
-                        <th className="pb-1">Độ tin cậy</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {imageResult.detections.map((d, idx) => (
-                        <tr key={idx} className="border-b border-slate-800/40 text-slate-300">
-                          <td className="py-1 font-medium">{d.class_name}</td>
-                          <td className="py-1 text-emerald-400 font-mono">{(d.confidence * 100).toFixed(1)}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400">Annotated (YOLOv8)</p>
+                  <img src={result.image_base64} alt="Annotated" className="w-full rounded-xl border border-slate-700 object-contain max-h-80" />
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-500 border border-dashed border-slate-800 rounded-xl p-8">
-                <FileText className="w-8 h-8 mb-2 stroke-[1.5]" />
-                <p className="text-xs">Chưa có kết quả. Hãy tải ảnh và nhấn nút phân tích.</p>
-              </div>
-            )}
-          </div>
-        </main>
-      )}
-
-      {/* Nội dung Tab: VIDEO */}
-      {activeTab === 'video' && (
-        <main className="max-w-5xl w-full mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Cột trái: Tải video */}
-          <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-                <Upload className="w-4 h-4 text-violet-400" />
-                <span>Tải video ngắn (&le; 10MB)</span>
-              </h2>
-
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-violet-500 rounded-xl p-6 cursor-pointer bg-slate-950/50 transition">
-                {videoPreview ? (
-                  <video src={videoPreview} controls className="max-h-60 rounded-lg" />
-                ) : (
-                  <div className="text-center">
-                    <Video className="w-10 h-10 text-slate-500 mx-auto mb-2" />
-                    <p className="text-xs text-slate-300">Nhấn để chọn file MP4 (Tối đa 5-10 giây)</p>
+              <div className="space-y-4">
+                <video src={result.videoUrl} controls className="w-full rounded-xl border border-slate-700 max-h-96" />
+                <div className="grid grid-cols-3 gap-2 text-center text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                  <div>
+                    <span className="text-slate-500 block">Detections</span>
+                    <span className="text-indigo-400 font-bold">{result.total}</span>
                   </div>
-                )}
-                <input type="file" accept="video/mp4" onChange={handleVideoChange} className="hidden" />
-              </label>
-            </div>
-
-            <button
-              onClick={handleDetectVideo}
-              disabled={!videoFile || isVideoLoading}
-              className={`w-full mt-5 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center space-x-2 transition ${
-                !videoFile || isVideoLoading
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  : 'bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-600/30'
-              }`}
-            >
-              {isVideoLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Đang xử lý video từng frame...</span>
-                </>
-              ) : (
-                <span>Bắt đầu xử lý Video</span>
-              )}
-            </button>
-          </div>
-
-          {/* Cột phải: Kết quả video */}
-          <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col">
-            <h2 className="text-sm font-semibold text-slate-200 mb-3 flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Video đã nhận diện</span>
-            </h2>
-
-            {videoResultUrl ? (
-              <div className="flex-1 flex flex-col">
-                <div className="flex items-center space-x-3 mb-3 text-xs">
-                  <span className="flex items-center text-slate-300">
-                    <Clock className="w-3.5 h-3.5 mr-1 text-violet-400" />
-                    Thời gian: {videoSummary?.timeMs} ms
-                  </span>
-                </div>
-
-                <div className="bg-slate-950 rounded-xl p-2 mb-4">
-                  <video src={videoResultUrl} controls autoPlay loop className="max-h-60 w-full rounded-lg" />
-                </div>
-
-                {/* Bảng tổng hợp số lượng vật thể */}
-                <div className="border border-slate-800 rounded-lg p-3 bg-slate-950/40">
-                  <p className="text-xs text-slate-400 mb-2 font-medium">Tổng số đối tượng xuất hiện:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {videoSummary && Object.entries(videoSummary.counts).length > 0 ? (
-                      Object.entries(videoSummary.counts).map(([name, count]) => (
-                        <span key={name} className="px-2.5 py-1 bg-violet-950/80 text-violet-300 border border-violet-800 rounded-md text-xs">
-                          {name}: <strong className="text-white">{count}</strong>
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs text-slate-500">Không có đối tượng nào vượt ngưỡng tin cậy.</span>
-                    )}
+                  <div>
+                    <span className="text-slate-500 block">Duration</span>
+                    <span className="text-indigo-400 font-bold">{result.duration}s</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Detected Classes</span>
+                    <span className="text-indigo-400 font-bold truncate block">{result.classes}</span>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-500 border border-dashed border-slate-800 rounded-xl p-8">
-                <Video className="w-8 h-8 mb-2 stroke-[1.5]" />
-                <p className="text-xs">Chưa có kết quả. Xử lý video trên CPU sẽ mất khoảng 5–15 giây.</p>
-              </div>
             )}
           </div>
-        </main>
-      )}
+        )}
+      </main>
     </div>
   );
 }
-
-export default App;
