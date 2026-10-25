@@ -73,7 +73,6 @@ async def detect_image(
     conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
     confidence: Optional[float] = Query(default=None, ge=0.05, le=1.0)
 ):
-    # Nhận ngưỡng confidence từ cả test_api lẫn frontend
     threshold = confidence if confidence is not None else conf_threshold
 
     # 1. Kiểm tra định dạng ảnh
@@ -82,7 +81,7 @@ async def detect_image(
     if file.content_type not in allowed_types and ext not in [".jpg", ".jpeg", ".png"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không hỗ trợ. Just only accept JPG, JPEG, PNG."
+            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG."
         )
 
     image_bytes = await file.read()
@@ -92,7 +91,7 @@ async def detect_image(
     if file_size_mb > MAX_IMAGE_SIZE_MB:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Exceeding limit: Image size is {file_size_mb:.2f}MB, maximum allowed is {MAX_IMAGE_SIZE_MB}MB. Just only accept JPG, JPEG, PNG <= {MAX_IMAGE_SIZE_MB}MB."
+            detail=f"Dung lượng ảnh ({file_size_mb:.2f}MB) vượt quá giới hạn cho phép (tối đa {MAX_IMAGE_SIZE_MB}MB). Vui lòng chọn ảnh nhẹ hơn."
         )
 
     # 3. Xác thực tính toàn vẹn của ảnh
@@ -103,12 +102,12 @@ async def detect_image(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tệp tải lên bị hỏng hoặc không phải là hình ảnh hợp lệ. Just only accept valid image files."
+            detail="Tệp tải lên bị hỏng hoặc không phải là hình ảnh hợp lệ."
         )
 
     model = model_state.get("model")
     if model is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model chưa sẵn sàng.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mô hình YOLO chưa sẵn sàng.")
 
     start_time = time.time()
     results = model.predict(source=image, conf=threshold, device="cpu", verbose=False)
@@ -138,7 +137,6 @@ async def detect_image(
         "filename": file.filename,
         "inference_time_ms": inference_time_ms,
         "total_objects": len(detections),
-        "count": len(detections),
         "detections": detections,
         "image_base64": f"data:image/jpeg;base64,{img_base64}"
     }
@@ -156,7 +154,7 @@ async def detect_video(
     if file.content_type != "video/mp4" and not (file.filename and file.filename.lower().endswith(".mp4")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không hỗ trợ. Just only accept MP4 video files."
+            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không được hỗ trợ. Chỉ chấp nhận video MP4."
         )
 
     # 2. Kiểm tra dung lượng video
@@ -165,7 +163,7 @@ async def detect_video(
     if file_size_mb > MAX_VIDEO_SIZE_MB:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Exceeding limit: Video size is {file_size_mb:.2f}MB, maximum allowed is {MAX_VIDEO_SIZE_MB}MB. Just only accept MP4 clips <= {MAX_VIDEO_SIZE_MB}MB."
+            detail=f"Dung lượng video ({file_size_mb:.2f}MB) vượt quá giới hạn cho phép (tối đa {MAX_VIDEO_SIZE_MB}MB). Vui lòng chọn clip nhẹ hơn."
         )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_temp:
@@ -179,7 +177,7 @@ async def detect_video(
     model = model_state.get("model")
     if model is None:
         cleanup_files(input_path, output_path)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model chưa sẵn sàng.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mô hình YOLO chưa sẵn sàng.")
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():

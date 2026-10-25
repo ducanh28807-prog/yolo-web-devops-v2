@@ -197,7 +197,7 @@ export default function App() {
               <span>Detection Results</span>
               {activeTab === 'image' && (
                 <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30 font-medium">
-                  {result.count} object(s) found
+                  {result.total_objects} vật thể tìm thấy
                 </span>
               )}
             </h2>
