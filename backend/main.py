@@ -5,23 +5,24 @@ import json
 import base64
 import tempfile
 from contextlib import asynccontextmanager
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import cv2
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, status, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from ultralytics import YOLO
 
 model_state: Dict[str, Any] = {}
 
-# Giới hạn xử lý an toàn cho môi trường CPU
-MAX_VIDEO_SIZE_MB = 10
-MAX_VIDEO_FRAMES = 150  # Khoảng 5 giây ở tốc độ 30fps
+# Cấu hình giới hạn an toàn cho môi trường CPU / Cloud Free Tier (Week 5)
+MAX_IMAGE_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
+MAX_VIDEO_SIZE_MB = int(os.getenv("MAX_VIDEO_SIZE_MB", "5"))
+MAX_VIDEO_FRAMES = 150  # Giới hạn ~5 giây ở 30fps để tránh tràn RAM và timeout
 
 def cleanup_files(*file_paths: str):
-    """Hàm chạy nền để xóa tệp tạm sau khi gửi response hoàn tất"""
+    """Xóa tệp tạm trên đĩa sau khi gửi response hoàn tất"""
     for path in file_paths:
         if path and os.path.exists(path):
             try:
@@ -31,10 +32,8 @@ def cleanup_files(*file_paths: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    model_name = "yolov8n.pt"
-    print(f"[*] Đang nạp mô hình {model_name} vào bộ nhớ CPU...")
+    model_name = os.getenv("MODEL_NAME", "yolov8n.pt")
     model_state["model"] = YOLO(model_name)
-    print("[*] Nạp mô hình hoàn tất.")
     yield
     model_state.clear()
 
@@ -60,30 +59,51 @@ def health_check():
         "status": "healthy",
         "service": "yolo-backend",
         "model_loaded": "model" in model_state,
-        "version": "0.3.0"
+        "version": "0.3.0",
+        "limits": {
+            "max_image_mb": MAX_IMAGE_SIZE_MB,
+            "max_video_mb": MAX_VIDEO_SIZE_MB,
+            "max_video_frames": MAX_VIDEO_FRAMES
+        }
     }
 
 @app.post("/api/detect/image")
 async def detect_image(
     file: UploadFile = File(...),
-    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0)
+    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
+    confidence: Optional[float] = Query(default=None, ge=0.05, le=1.0)
 ):
+    # Nhận ngưỡng confidence từ cả test_api lẫn frontend
+    threshold = confidence if confidence is not None else conf_threshold
+
+    # 1. Kiểm tra định dạng ảnh
     allowed_types = ["image/jpeg", "image/png", "image/jpg"]
-    if file.content_type not in allowed_types:
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if file.content_type not in allowed_types and ext not in [".jpg", ".jpeg", ".png"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Định dạng tệp không được hỗ trợ ({file.content_type}). Chỉ chấp nhận JPG, JPEG, PNG."
+            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không hỗ trợ. Just only accept JPG, JPEG, PNG."
         )
 
+    image_bytes = await file.read()
+    file_size_mb = len(image_bytes) / (1024 * 1024)
+
+    # 2. Kiểm tra dung lượng ảnh (Bảo vệ RAM 512MB)
+    if file_size_mb > MAX_IMAGE_SIZE_MB:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Exceeding limit: Image size is {file_size_mb:.2f}MB, maximum allowed is {MAX_IMAGE_SIZE_MB}MB. Just only accept JPG, JPEG, PNG <= {MAX_IMAGE_SIZE_MB}MB."
+        )
+
+    # 3. Xác thực tính toàn vẹn của ảnh
     try:
-        image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes))
         image.verify()
         image = Image.open(io.BytesIO(image_bytes))
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tệp tải lên bị hỏng hoặc không phải là hình ảnh hợp lệ."
+            detail="Tệp tải lên bị hỏng hoặc không phải là hình ảnh hợp lệ. Just only accept valid image files."
         )
 
     model = model_state.get("model")
@@ -91,7 +111,7 @@ async def detect_image(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model chưa sẵn sàng.")
 
     start_time = time.time()
-    results = model.predict(source=image, conf=conf_threshold, device="cpu")
+    results = model.predict(source=image, conf=threshold, device="cpu", verbose=False)
     inference_time_ms = round((time.time() - start_time) * 1000, 2)
 
     result = results[0]
@@ -100,6 +120,7 @@ async def detect_image(
     for box in result.boxes:
         cls_id = int(box.cls[0].item())
         detections.append({
+            "class": result.names[cls_id],
             "class_name": result.names[cls_id],
             "confidence": round(float(box.conf[0].item()), 4),
             "bbox": [round(float(coord), 2) for coord in box.xyxy[0].tolist()]
@@ -114,8 +135,10 @@ async def detect_image(
     img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     return {
+        "filename": file.filename,
         "inference_time_ms": inference_time_ms,
         "total_objects": len(detections),
+        "count": len(detections),
         "detections": detections,
         "image_base64": f"data:image/jpeg;base64,{img_base64}"
     }
@@ -124,25 +147,27 @@ async def detect_image(
 async def detect_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0)
+    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
+    confidence: Optional[float] = Query(default=None, ge=0.05, le=1.0)
 ):
+    threshold = confidence if confidence is not None else conf_threshold
+
     # 1. Kiểm tra định dạng MP4
     if file.content_type != "video/mp4" and not (file.filename and file.filename.lower().endswith(".mp4")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Định dạng video không được hỗ trợ ({file.content_type}). Chỉ chấp nhận video MP4."
+            detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không hỗ trợ. Just only accept MP4 video files."
         )
 
-    # 2. Đọc và kiểm tra kích thước file
+    # 2. Kiểm tra dung lượng video
     contents = await file.read()
     file_size_mb = len(contents) / (1024 * 1024)
     if file_size_mb > MAX_VIDEO_SIZE_MB:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Dung lượng video vượt quá giới hạn cho phép ({file_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)."
+            detail=f"Exceeding limit: Video size is {file_size_mb:.2f}MB, maximum allowed is {MAX_VIDEO_SIZE_MB}MB. Just only accept MP4 clips <= {MAX_VIDEO_SIZE_MB}MB."
         )
 
-    # 3. Tạo các file tạm trên đĩa để OpenCV xử lý
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_temp:
         in_temp.write(contents)
         input_path = in_temp.name
@@ -159,7 +184,7 @@ async def detect_video(
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         cleanup_files(input_path, output_path)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Không thể mở hoặc giải mã tệp video.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tệp tải lên bị hỏng: Không thể mở tệp video.")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -169,6 +194,7 @@ async def detect_video(
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     summary_counts: Dict[str, int] = {}
+    detected_classes = set()
     frame_count = 0
     start_time = time.time()
 
@@ -178,13 +204,13 @@ async def detect_video(
             if not ret or frame_count >= MAX_VIDEO_FRAMES:
                 break
 
-            # Dự đoán trên frame hiện tại
-            results = model.predict(source=frame, conf=conf_threshold, device="cpu", verbose=False)
+            results = model.predict(source=frame, conf=threshold, device="cpu", verbose=False)
             res = results[0]
 
             for box in res.boxes:
                 cls_name = res.names[int(box.cls[0].item())]
                 summary_counts[cls_name] = summary_counts.get(cls_name, 0) + 1
+                detected_classes.add(cls_name)
 
             annotated_frame = res.plot()
             out.write(annotated_frame)
@@ -197,16 +223,19 @@ async def detect_video(
         out.release()
 
     total_time_ms = round((time.time() - start_time) * 1000, 2)
+    duration_sec = round(frame_count / fps, 1)
 
-    # Đăng ký tác vụ nền: Xóa cả 2 tệp tạm sau khi gửi file xong
     background_tasks.add_task(cleanup_files, input_path, output_path)
 
     return FileResponse(
         path=output_path,
         media_type="video/mp4",
-        filename="detected_output.mp4",
+        filename=f"detected_{file.filename or 'output.mp4'}",
         headers={
             "X-Summary-Counts": json.dumps(summary_counts),
+            "X-Total-Detections": str(sum(summary_counts.values())),
+            "X-Detected-Classes": ", ".join(list(detected_classes)),
+            "X-Duration-Seconds": str(duration_sec),
             "X-Inference-Time-Ms": str(total_time_ms)
         }
     )
