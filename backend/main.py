@@ -1,49 +1,13 @@
-import io
 import os
-import time
-import json
-import base64
+import shutil
 import tempfile
-from contextlib import asynccontextmanager
-from typing import List, Dict, Any
-
 import cv2
-from fastapi import FastAPI, UploadFile, File, Query, HTTPException, status, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, UnidentifiedImageError
+from fastapi.responses import FileResponse, JSONResponse
 from ultralytics import YOLO
 
-model_state: Dict[str, Any] = {}
-
-# Giới hạn xử lý an toàn cho môi trường CPU
-MAX_VIDEO_SIZE_MB = 10
-MAX_VIDEO_FRAMES = 150  # Khoảng 5 giây ở tốc độ 30fps
-
-def cleanup_files(*file_paths: str):
-    """Hàm chạy nền để xóa tệp tạm sau khi gửi response hoàn tất"""
-    for path in file_paths:
-        if path and os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    model_name = "yolov8n.pt"
-    print(f"[*] Đang nạp mô hình {model_name} vào bộ nhớ CPU...")
-    model_state["model"] = YOLO(model_name)
-    print("[*] Nạp mô hình hoàn tất.")
-    yield
-    model_state.clear()
-
-app = FastAPI(
-    title="YOLO Object Detection API",
-    description="Backend API phục vụ nhận diện vật thể ảnh/video cho Lab Train DevOps",
-    version="0.3.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="YOLO Object Detection API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,162 +15,171 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Summary-Counts", "X-Inference-Time-Ms"]
 )
 
-@app.get("/health", status_code=status.HTTP_200_OK)
+MODEL_NAME = os.getenv("MODEL_NAME", "yolov8n.pt")
+model = YOLO(MODEL_NAME)
+
+MAX_IMAGE_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
+MAX_VIDEO_SIZE_MB = int(os.getenv("MAX_VIDEO_SIZE_MB", "5"))
+MAX_VIDEO_DURATION_SEC = float(os.getenv("MAX_VIDEO_DURATION_SEC", "10.0"))
+
+@app.get("/health")
 def health_check():
     return {
         "status": "healthy",
-        "service": "yolo-backend",
-        "model_loaded": "model" in model_state,
-        "version": "0.3.0"
+        "model": MODEL_NAME,
+        "limits": {
+            "max_image_mb": MAX_IMAGE_SIZE_MB,
+            "max_video_mb": MAX_VIDEO_SIZE_MB,
+            "max_video_duration_sec": MAX_VIDEO_DURATION_SEC
+        }
     }
 
 @app.post("/api/detect/image")
 async def detect_image(
     file: UploadFile = File(...),
-    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0)
+    confidence: float = Query(0.25, ge=0.0, le=1.0)
 ):
-    allowed_types = ["image/jpeg", "image/png", "image/jpg"]
-    if file.content_type not in allowed_types:
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Định dạng tệp không được hỗ trợ ({file.content_type}). Chỉ chấp nhận JPG, JPEG, PNG."
+            detail=f"Unsupported file format '{ext}'. Only accept JPG, JPEG, and PNG images."
         )
 
+    contents = await file.read()
+    file_size_mb = len(contents) / (1024 * 1024)
+    if file_size_mb > MAX_IMAGE_SIZE_MB:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Exceeding limit: Image size is {file_size_mb:.2f}MB, maximum allowed is {MAX_IMAGE_SIZE_MB}MB. Only accept files <= {MAX_IMAGE_SIZE_MB}MB."
+        )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    out_path = None
     try:
-        image_bytes = await file.read()
-        image = Image.open(io.BytesIO(image_bytes))
-        image.verify()
-        image = Image.open(io.BytesIO(image_bytes))
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tệp tải lên bị hỏng hoặc không phải là hình ảnh hợp lệ."
-        )
+        results = model.predict(source=tmp_path, conf=confidence)
+        res = results[0]
 
-    model = model_state.get("model")
-    if model is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model chưa sẵn sàng.")
+        detections = []
+        for box in res.boxes:
+            cls_id = int(box.cls[0].item())
+            cls_name = res.names[cls_id]
+            conf = float(box.conf[0].item())
+            xyxy = [float(x) for x in box.xyxy[0].tolist()]
+            detections.append({
+                "class": cls_name,
+                "confidence": round(conf, 4),
+                "bbox": [round(x, 1) for x in xyxy]
+            })
 
-    start_time = time.time()
-    results = model.predict(source=image, conf=conf_threshold, device="cpu")
-    inference_time_ms = round((time.time() - start_time) * 1000, 2)
+        fd, out_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        res.save(filename=out_path)
 
-    result = results[0]
-    detections: List[Dict[str, Any]] = []
+        with open(out_path, "rb") as f:
+            annotated_bytes = f.read()
 
-    for box in result.boxes:
-        cls_id = int(box.cls[0].item())
-        detections.append({
-            "class_name": result.names[cls_id],
-            "confidence": round(float(box.conf[0].item()), 4),
-            "bbox": [round(float(coord), 2) for coord in box.xyxy[0].tolist()]
-        })
+        import base64
+        base64_img = base64.b64encode(annotated_bytes).decode("utf-8")
 
-    annotated_bgr = result.plot()
-    annotated_rgb = annotated_bgr[..., ::-1]
-    annotated_img = Image.fromarray(annotated_rgb)
-
-    buffered = io.BytesIO()
-    annotated_img.save(buffered, format="JPEG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    return {
-        "inference_time_ms": inference_time_ms,
-        "total_objects": len(detections),
-        "detections": detections,
-        "image_base64": f"data:image/jpeg;base64,{img_base64}"
-    }
+        return {
+            "filename": file.filename,
+            "count": len(detections),
+            "detections": detections,
+            "image_base64": f"data:image/jpeg;base64,{base64_img}",
+            "speed": res.speed
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if out_path and os.path.exists(out_path):
+            os.remove(out_path)
 
 @app.post("/api/detect/video")
 async def detect_video(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0)
+    confidence: float = Query(0.25, ge=0.0, le=1.0)
 ):
-    # 1. Kiểm tra định dạng MP4
-    if file.content_type != "video/mp4" and not (file.filename and file.filename.lower().endswith(".mp4")):
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext != ".mp4":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Định dạng video không được hỗ trợ ({file.content_type}). Chỉ chấp nhận video MP4."
+            detail=f"Unsupported format '{ext}'. Only accept MP4 video files."
         )
 
-    # 2. Đọc và kiểm tra kích thước file
     contents = await file.read()
     file_size_mb = len(contents) / (1024 * 1024)
     if file_size_mb > MAX_VIDEO_SIZE_MB:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Dung lượng video vượt quá giới hạn cho phép ({file_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)."
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Exceeding limit: Video size is {file_size_mb:.2f}MB, maximum allowed is {MAX_VIDEO_SIZE_MB}MB. Only accept clips <= {MAX_VIDEO_SIZE_MB}MB."
         )
 
-    # 3. Tạo các file tạm trên đĩa để OpenCV xử lý
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_temp:
-        in_temp.write(contents)
-        input_path = in_temp.name
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_in:
+        tmp_in.write(contents)
+        tmp_in_path = tmp_in.name
 
-    out_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    output_path = out_temp.name
-    out_temp.close()
-
-    model = model_state.get("model")
-    if model is None:
-        cleanup_files(input_path, output_path)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Model chưa sẵn sàng.")
-
-    cap = cv2.VideoCapture(input_path)
+    cap = cv2.VideoCapture(tmp_in_path)
     if not cap.isOpened():
-        cleanup_files(input_path, output_path)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Không thể mở hoặc giải mã tệp video.")
+        if os.path.exists(tmp_in_path):
+            os.remove(tmp_in_path)
+        raise HTTPException(status_code=400, detail="Cannot read video file.")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
+
+    if duration > MAX_VIDEO_DURATION_SEC:
+        cap.release()
+        if os.path.exists(tmp_in_path):
+            os.remove(tmp_in_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Exceeding limit: Video duration is {duration:.1f}s, maximum allowed is {MAX_VIDEO_DURATION_SEC}s on Cloud. Please upload a shorter clip."
+        )
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    fd, tmp_out_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    out = cv2.VideoWriter(tmp_out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
 
-    summary_counts: Dict[str, int] = {}
-    frame_count = 0
-    start_time = time.time()
+    detected_classes = set()
+    total_detections = 0
 
     try:
         while True:
             ret, frame = cap.read()
-            if not ret or frame_count >= MAX_VIDEO_FRAMES:
+            if not ret:
                 break
-
-            # Dự đoán trên frame hiện tại
-            results = model.predict(source=frame, conf=conf_threshold, device="cpu", verbose=False)
+            results = model.predict(source=frame, conf=confidence, verbose=False)
             res = results[0]
-
-            for box in res.boxes:
-                cls_name = res.names[int(box.cls[0].item())]
-                summary_counts[cls_name] = summary_counts.get(cls_name, 0) + 1
-
             annotated_frame = res.plot()
             out.write(annotated_frame)
-            frame_count += 1
-    except Exception as exc:
-        cleanup_files(input_path, output_path)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Lỗi khi xử lý video: {str(exc)}")
+            total_detections += len(res.boxes)
+            for box in res.boxes:
+                detected_classes.add(res.names[int(box.cls[0].item())])
     finally:
         cap.release()
         out.release()
-
-    total_time_ms = round((time.time() - start_time) * 1000, 2)
-
-    # Đăng ký tác vụ nền: Xóa cả 2 tệp tạm sau khi gửi file xong
-    background_tasks.add_task(cleanup_files, input_path, output_path)
+        if os.path.exists(tmp_in_path):
+            os.remove(tmp_in_path)
 
     return FileResponse(
-        path=output_path,
+        tmp_out_path,
         media_type="video/mp4",
-        filename="detected_output.mp4",
+        filename=f"detected_{file.filename}",
         headers={
-            "X-Summary-Counts": json.dumps(summary_counts),
-            "X-Inference-Time-Ms": str(total_time_ms)
+            "X-Total-Detections": str(total_detections),
+            "X-Detected-Classes": ", ".join(list(detected_classes)),
+            "X-Duration-Seconds": f"{duration:.1f}"
         }
     )
