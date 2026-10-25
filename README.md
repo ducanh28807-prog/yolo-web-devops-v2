@@ -69,3 +69,12 @@ Mỗi commit hoặc Pull Request vào nhánh `main` sẽ tự động kích ho�
 1. **Backend Unit Tests:** Kiểm tra tính toàn vẹn của API endpoints (`/health`, `/api/detect/image`).
 2. **Frontend Build Check:** Xác thực cú pháp React, kiểm tra đóng gói bundle.
 3. **Docker Validation:** Kiểm tra cú pháp và cấu trúc mạng của file `docker-compose.yml`.
+
+## 6. Giới hạn Nền tảng Đám mây (Cloud Platform Limitations)
+
+Hệ thống được cấu hình tối ưu hóa cho môi trường triển khai Cloud miễn phí (Render Free Tier) nhằm tránh lỗi tràn bộ nhớ (Out-Of-Memory) và timeout yêu cầu:
+
+- **Môi trường vận hành:** CPU-only inference, giới hạn bộ nhớ 512MB RAM.
+- **Giới hạn hình ảnh:** Dung lượng tối đa **10MB** (hỗ trợ JPG, JPEG, PNG).
+- **Giới hạn video ngắn:** Dung lượng tối đa **5MB**, thời lượng xử lý giới hạn tối đa **150 khung hình** (~5 giây ở 30fps).
+- **Cơ chế an toàn:** Tự động hủy tiến trình decode khi tệp hỏng và tự động dọn dẹp tệp tạm trên đĩa sau khi hoàn tất phản hồi.
