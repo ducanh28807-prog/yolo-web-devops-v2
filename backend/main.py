@@ -4,11 +4,12 @@ import tempfile
 import cv2
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from ultralytics import YOLO
 
 app = FastAPI(title="YOLO Object Detection API", version="1.0.0")
 
+# Cấu hình CORS mở để frontend Cloud và local đều gọi được
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,14 +21,17 @@ app.add_middleware(
 MODEL_NAME = os.getenv("MODEL_NAME", "yolov8n.pt")
 model = YOLO(MODEL_NAME)
 
+# Giới hạn kích thước và thời lượng để đảm bảo an toàn cho RAM 512MB trên Render
 MAX_IMAGE_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
 MAX_VIDEO_SIZE_MB = int(os.getenv("MAX_VIDEO_SIZE_MB", "5"))
 MAX_VIDEO_DURATION_SEC = float(os.getenv("MAX_VIDEO_DURATION_SEC", "10.0"))
 
 @app.get("/health")
 def health_check():
+    """Khớp chính xác schema của bộ test Week 2 và bổ sung thông số limits cho Week 5"""
     return {
         "status": "healthy",
+        "service": "yolo-backend",
         "model": MODEL_NAME,
         "limits": {
             "max_image_mb": MAX_IMAGE_SIZE_MB,
@@ -39,8 +43,9 @@ def health_check():
 @app.post("/api/detect/image")
 async def detect_image(
     file: UploadFile = File(...),
-    confidence: float = Query(0.25, ge=0.0, le=1.0)
+    confidence: float = Query(0.25, alias="conf_threshold", ge=0.0, le=1.0)
 ):
+    # 1. Kiểm tra định dạng đuôi file
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in [".jpg", ".jpeg", ".png"]:
         raise HTTPException(
@@ -48,6 +53,7 @@ async def detect_image(
             detail=f"Unsupported file format '{ext}'. Only accept JPG, JPEG, and PNG images."
         )
 
+    # 2. Kiểm tra dung lượng file
     contents = await file.read()
     file_size_mb = len(contents) / (1024 * 1024)
     if file_size_mb > MAX_IMAGE_SIZE_MB:
@@ -56,13 +62,25 @@ async def detect_image(
             detail=f"Exceeding limit: Image size is {file_size_mb:.2f}MB, maximum allowed is {MAX_IMAGE_SIZE_MB}MB. Only accept files <= {MAX_IMAGE_SIZE_MB}MB."
         )
 
+    # Ghi file tạm để xác thực và xử lý
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
+    # 3. Xác thực nội dung ảnh bằng OpenCV để tránh file hỏng/giả mạo đuôi (trả về 400 thay vì 500)
+    img_check = cv2.imread(tmp_path)
+    if img_check is None:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or corrupted image content. Cannot decode image."
+        )
+
     out_path = None
     try:
-        results = model.predict(source=tmp_path, conf=confidence)
+        # 4. Chạy suy luận YOLOv8
+        results = model.predict(source=tmp_path, conf=confidence, verbose=False)
         res = results[0]
 
         detections = []
@@ -77,6 +95,7 @@ async def detect_image(
                 "bbox": [round(x, 1) for x in xyxy]
             })
 
+        # Lưu ảnh đã vẽ bounding box ra file tạm để encode Base64 trả về
         fd, out_path = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
         res.save(filename=out_path)
@@ -87,16 +106,23 @@ async def detect_image(
         import base64
         base64_img = base64.b64encode(annotated_bytes).decode("utf-8")
 
+        # Trích xuất thời gian inference_time_ms từ Ultralytics speed dictionary
+        inference_time = float(res.speed.get("inference", 0.0))
+
         return {
             "filename": file.filename,
             "count": len(detections),
             "detections": detections,
             "image_base64": f"data:image/jpeg;base64,{base64_img}",
+            "inference_time_ms": round(inference_time, 2),
             "speed": res.speed
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
     finally:
+        # Luôn dọn dẹp file tạm trên đĩa
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         if out_path and os.path.exists(out_path):
@@ -105,8 +131,9 @@ async def detect_image(
 @app.post("/api/detect/video")
 async def detect_video(
     file: UploadFile = File(...),
-    confidence: float = Query(0.25, ge=0.0, le=1.0)
+    confidence: float = Query(0.25, alias="conf_threshold", ge=0.0, le=1.0)
 ):
+    # 1. Kiểm tra định dạng đuôi file video
     ext = os.path.splitext(file.filename)[1].lower()
     if ext != ".mp4":
         raise HTTPException(
@@ -114,6 +141,7 @@ async def detect_video(
             detail=f"Unsupported format '{ext}'. Only accept MP4 video files."
         )
 
+    # 2. Kiểm tra dung lượng video
     contents = await file.read()
     file_size_mb = len(contents) / (1024 * 1024)
     if file_size_mb > MAX_VIDEO_SIZE_MB:
@@ -136,6 +164,7 @@ async def detect_video(
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = frame_count / fps
 
+    # 3. Giới hạn thời lượng video tránh timeout và tràn RAM cloud
     if duration > MAX_VIDEO_DURATION_SEC:
         cap.release()
         if os.path.exists(tmp_in_path):
