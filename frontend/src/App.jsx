@@ -51,21 +51,24 @@ export default function App() {
         body: formData,
       });
 
+      // Nếu Backend trả về mã lỗi (400, 413, 500...)
       if (!res.ok) {
-        let errMessage = `Error ${res.status}: Failed to process request.`;
+        let errDetail = `Lỗi ${res.status}: Xử lý thất bại.`;
+        let reqId = res.headers.get('X-Request-ID') || "N/A";
+
         try {
           const errData = await res.json();
-          if (errData && errData.detail) {
-            errMessage = errData.detail;
-          }
+          if (errData && errData.detail) errDetail = errData.detail;
+          if (errData && errData.request_id) reqId = errData.request_id;
         } catch (_) {
-    const errorDetail = _.response?.data?.detail || "Đã xảy ra lỗi khi kết nối máy chủ.";
-    const reqId = _.response?.data?.request_id || _.response?.headers?.["x-request-id"] || "N/A";
-    setError(`${errorDetail} (Mã yêu cầu: ${reqId})`);
-  }
-        throw new Error(errMessage);
+          // Trường hợp phản hồi không phải dạng JSON
+        }
+
+        setError(`${errDetail} (Mã yêu cầu: ${reqId})`);
+        return;
       }
 
+      // Xử lý khi thành công (200 OK)
       if (activeTab === 'image') {
         const data = await res.json();
         setResult(data);
@@ -80,10 +83,9 @@ export default function App() {
         });
       }
     } catch (err) {
-    const errorDetail = err.response?.data?.detail || "Đã xảy ra lỗi khi kết nối máy chủ.";
-    const reqId = err.response?.data?.request_id || err.response?.headers?.["x-request-id"] || "N/A";
-    setError(`${errorDetail} (Mã yêu cầu: ${reqId})`);
-  } finally {
+      // Bắt lỗi rớt mạng hoàn toàn (Network down, DNS fail)
+      setError(`Đã xảy ra lỗi khi kết nối máy chủ: ${err.message} (Mã yêu cầu: N/A)`);
+    } finally {
       setLoading(false);
     }
   };
@@ -140,7 +142,6 @@ export default function App() {
               className="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
             />
 
-            {/* Rào trước quy định file upload */}
             <div className="mt-4 text-center text-xs text-slate-400 bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700/80">
               <span className="font-semibold text-slate-300">Giới hạn định dạng & dung lượng:</span>
               {activeTab === 'image' ? (
