@@ -51,7 +51,6 @@ export default function App() {
         body: formData,
       });
 
-      // Nếu Backend trả về mã lỗi (400, 413, 500...)
       if (!res.ok) {
         let errDetail = `Lỗi ${res.status}: Xử lý thất bại.`;
         let reqId = res.headers.get('X-Request-ID') || "N/A";
@@ -60,15 +59,12 @@ export default function App() {
           const errData = await res.json();
           if (errData && errData.detail) errDetail = errData.detail;
           if (errData && errData.request_id) reqId = errData.request_id;
-        } catch (_) {
-          // Trường hợp phản hồi không phải dạng JSON
-        }
+        } catch (_) {}
 
         setError(`${errDetail} (Mã yêu cầu: ${reqId})`);
         return;
       }
 
-      // Xử lý khi thành công (200 OK)
       if (activeTab === 'image') {
         const data = await res.json();
         setResult(data);
@@ -83,11 +79,49 @@ export default function App() {
         });
       }
     } catch (err) {
-      // Bắt lỗi rớt mạng hoàn toàn (Network down, DNS fail)
       setError(`Đã xảy ra lỗi khi kết nối máy chủ: ${err.message} (Mã yêu cầu: N/A)`);
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportToCSV = () => {
+    if (!result) return;
+
+    let csvContent = "";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `yolo_detection_${activeTab}_${timestamp}.csv`;
+
+    if (activeTab === 'image') {
+      csvContent = "Index,Class,Confidence (%),Box_X1,Box_Y1,Box_X2,Box_Y2\n";
+      const items = result.detections || result.objects || [];
+
+      if (items.length > 0) {
+        items.forEach((item, idx) => {
+          const className = item.class || item.name || "unknown";
+          const conf = item.confidence ? (item.confidence * 100).toFixed(1) : "N/A";
+          const box = item.box || item.bbox || [0, 0, 0, 0];
+          csvContent += `${idx + 1},"${className}",${conf}%,${box[0]},${box[1]},${box[2]},${box[3]}\n`;
+        });
+      } else {
+        csvContent += `1,"No objects detected",${Math.round(confidence * 100)}%,0,0,0,0\n`;
+      }
+    } else {
+      csvContent = "Metric,Value,Note\n";
+      csvContent += `Total Detection Instances,${result.total},"Sum of detected bounding boxes across all processed frames"\n`;
+      csvContent += `Duration,${result.duration}s,"Processed video clip length"\n`;
+      csvContent += `Detected Classes,"${result.classes}","Distinct object categories found"\n`;
+    }
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -200,14 +234,25 @@ export default function App() {
         {/* Result Viewer */}
         {result && (
           <div className="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-6 shadow-xl space-y-4">
-            <h2 className="text-lg font-bold text-white flex items-center justify-between">
-              <span>Detection Results</span>
-              {activeTab === 'image' && (
-                <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30 font-medium">
-                  {result.total_objects} vật thể tìm thấy
-                </span>
-              )}
-            </h2>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-bold text-white">Detection Results</h2>
+                {activeTab === 'image' && (
+                  <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30 font-medium">
+                    {result.total_objects} vật thể tìm thấy
+                  </span>
+                )}
+              </div>
+
+              <button
+                onClick={exportToCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
+                title="Tải báo cáo số liệu dạng bảng CSV"
+              >
+                <span>📊</span>
+                <span>Export CSV</span>
+              </button>
+            </div>
 
             {activeTab === 'image' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
