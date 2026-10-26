@@ -72,21 +72,23 @@ app.add_middleware(
     expose_headers=["X-Summary-Counts", "X-Inference-Time-Ms", "X-Request-ID"]
 )
 
-# 2. Middleware cấp phát Request ID và ghi Structured Log cho từng lượt gọi
+# 2. Middleware cấp phát Request ID và ghi Structured Log an toàn
 @app.middleware("http")
 async def structured_logging_middleware(request: Request, call_next):
-    # Lấy Request-ID từ client gửi lên hoặc tự sinh mã duy nhất (Correlation ID)
     request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:8]}"
     request.state.request_id = request_id
 
     start_time = time.time()
-    response = await call_next(request)
-    latency_ms = round((time.time() - start_time) * 1000, 2)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        logger.error(f"REQUEST_CRASH [{request_id}] - Route: {request.url.path} sau {latency_ms}ms: {str(exc)}")
+        raise exc
 
-    # Đính kèm X-Request-ID vào response header để client đối chiếu khi có lỗi
+    latency_ms = round((time.time() - start_time) * 1000, 2)
     response.headers["X-Request-ID"] = request_id
 
-    # Đóng gói log dạng cấu trúc (Structured JSON Payload)
     log_data = {
         "request_id": request_id,
         "method": request.method,
@@ -105,7 +107,7 @@ async def structured_logging_middleware(request: Request, call_next):
 
     return response
 
-# 3. Exception Handler tùy biến: trả mã lỗi đính kèm request_id mà không làm gãy test
+# 3. Exception Handlers: Luôn đính kèm CORS headers và Request-ID
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     req_id = getattr(request.state, "request_id", "req-unknown")
@@ -113,6 +115,21 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail, "request_id": req_id},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "X-Request-ID": req_id
+        }
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "req-unknown")
+    logger.error(f"UNHANDLED_EXCEPTION [{req_id}]: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": f"Lỗi xử lý nội bộ: {str(exc)}", "request_id": req_id},
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "*",
@@ -147,8 +164,9 @@ def readiness_check():
         )
     return {"status": "ready", "model": model_state.get("model_name")}
 
+# Sử dụng def thường để chạy trên Threadpool, giải phóng Event Loop cho health/readiness check
 @app.post("/api/detect/image")
-async def detect_image(
+def detect_image(
     request: Request,
     file: UploadFile = File(...),
     conf_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
@@ -166,7 +184,7 @@ async def detect_image(
             detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG."
         )
 
-    image_bytes = await file.read()
+    image_bytes = file.file.read()
     file_size_mb = round(len(image_bytes) / (1024 * 1024), 2)
 
     # 2. Kiểm tra dung lượng
@@ -176,11 +194,11 @@ async def detect_image(
             detail=f"Dung lượng ảnh ({file_size_mb}MB) vượt quá giới hạn cho phép (tối đa {MAX_IMAGE_SIZE_MB}MB). Vui lòng chọn ảnh nhẹ hơn."
         )
 
-    # 3. Xác thực cấu trúc ảnh
+    # 3. Xác thực cấu trúc ảnh & chuẩn hóa dải màu RGB
     try:
         image = Image.open(io.BytesIO(image_bytes))
         image.verify()
-        image = Image.open(io.BytesIO(image_bytes))
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -208,7 +226,7 @@ async def detect_image(
         })
 
     annotated_bgr = result.plot()
-    annotated_rgb = annotated_bgr[..., ::-1]
+    annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
     annotated_img = Image.fromarray(annotated_rgb)
 
     buffered = io.BytesIO()
