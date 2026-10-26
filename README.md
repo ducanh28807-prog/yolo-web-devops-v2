@@ -11,12 +11,13 @@ Nền tảng Full-stack AI nhận diện đối tượng theo thời gian thực
 
 ---
 
-## 🌐 Đường dẫn Dịch vụ Triển khai (Live Services)
+## 🌐 Đường dẫn Dịch vụ & Tài liệu Bài nộp (Live Services & Docs)
 
 - **Live Frontend Web App:** [https://yolo-frontend-ulf0.onrender.com](https://yolo-frontend-ulf0.onrender.com)
 - **Live Backend API Health:** [https://yolo-backend-cupu.onrender.com/health](https://yolo-backend-cupu.onrender.com/health)
 - **API Documentation (Swagger UI):** [https://yolo-backend-cupu.onrender.com/docs](https://yolo-backend-cupu.onrender.com/docs)
-- **Báo cáo sự cố chi tiết (Incident Report):** [incident-report.md](./incident-report.md)
+- **Báo cáo Sự cố (Week 6 Incident Report):** [docs/incident-report.md](./docs/incident-report.md)
+- **Bài thu hoạch Cá nhân (Week 7 Reflection):** [docs/REFLECTION.md](./docs/REFLECTION.md)
 
 ---
 
