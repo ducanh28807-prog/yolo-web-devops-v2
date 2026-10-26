@@ -192,7 +192,7 @@ async def detect_image(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Mô hình YOLO chưa sẵn sàng.")
 
     start_infer = time.time()
-    results = model.predict(source=image, conf=threshold, device="cpu", verbose=False)
+    results = model.predict(source=image, conf=threshold, imgsz=320, device="cpu", verbose=False)
     inference_time_ms = round((time.time() - start_infer) * 1000, 2)
 
     result = results[0]
@@ -293,7 +293,7 @@ async def detect_video(
             if not ret or frame_count >= MAX_VIDEO_FRAMES:
                 break
 
-            results = model.predict(source=frame, conf=threshold, device="cpu", verbose=False)
+            results = model.predict(source=frame, conf=threshold, imgsz=320, device="cpu", verbose=False)
             res = results[0]
 
             for box in res.boxes:
