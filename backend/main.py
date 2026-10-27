@@ -34,7 +34,7 @@ def get_env_int(key: str, default: int) -> int:
 
 MAX_IMAGE_SIZE_MB = get_env_int("MAX_UPLOAD_SIZE_MB", 10)
 MAX_VIDEO_SIZE_MB = get_env_int("MAX_VIDEO_SIZE_MB", 5)
-MAX_VIDEO_FRAMES = 60  # Khống chế 60 frames (~2-2.5s) để xử lý trong ~15s, tránh chạm trần timeout 50s của Render
+MAX_VIDEO_FRAMES = 150  # ~5 giây ở 30fps
 
 def cleanup_files(*file_paths: str):
     """Hàm dọn dẹp file tạm chạy ngầm"""
@@ -199,12 +199,6 @@ def detect_image(
         image = Image.open(io.BytesIO(image_bytes))
         image.verify()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        
-        # BẢO VỆ TÀI NGUYÊN: Giới hạn cạnh lớn nhất về 640px
-        # Tránh bung mảng numpy thô quá lớn làm sập RAM 512MB và nghẽn CPU tính toán
-        MAX_DIM = 640
-        if max(image.size) > MAX_DIM:
-            image.thumbnail((MAX_DIM, MAX_DIM), Image.Resampling.LANCZOS)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -254,9 +248,8 @@ def detect_image(
         "request_id": req_id
     }
 
-# Sử dụng def thường (Threadpool) thay vì async def để không phong tỏa Event Loop khi xử lý video
 @app.post("/api/detect/video")
-def detect_video(
+async def detect_video(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -273,8 +266,8 @@ def detect_video(
             detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không được hỗ trợ. Chỉ chấp nhận video MP4."
         )
 
-    # 2. Kiểm tra dung lượng video (Đọc file nhị phân đồng bộ)
-    contents = file.file.read()
+    # 2. Kiểm tra dung lượng video
+    contents = await file.read()
     file_size_mb = round(len(contents) / (1024 * 1024), 2)
     if file_size_mb > MAX_VIDEO_SIZE_MB:
         raise HTTPException(
@@ -361,3 +354,4 @@ def detect_video(
             "X-Request-ID": req_id
         }
     )
+
