@@ -75,6 +75,7 @@ Kiểm tra lịch sử Git trên GitHub phát hiện:
 - Gửi file ảnh hợp lệ 31 KB qua `curl`: Backend xử lý hoàn tất trong **913 ms**, trả về mã `200 OK`.
 - **Thử nghiệm ảnh 12MP (kích thước nén 800 KB):** Bộ nhớ RAM tiến trình Python vọt từ 280MB lên hơn 500MB ngay khi gọi `Image.open().convert("RGB")`. Trên Render không có bộ nhớ Swap, hệ điều hành kích hoạt OOM Killer tiêu diệt tiến trình.
 - **Thử nghiệm video 150 frames:** Đoạn clip 5 giây cần xử lý 150 frames. Tốc độ inference trên vCPU Render là ~0.35s/frame, tổng thời gian xử lý thực tế kéo dài trên 52 giây. Con số **49.06 giây** đo được trên tab Network trùng khớp hoàn toàn với thời điểm Reverse Proxy của Render ngắt kết nối HTTP do vượt quá ngưỡng Request Timeout.
+- **Thử nghiệm mã hóa video trên Docker Linux:** Gói `opencv-python-headless` thiếu thư viện bản quyền `libx264`, hệ thống phải xuất bằng `mp4v`. Chuẩn này mở bằng VLC bình thường nhưng bị Chrome/Edge từ chối phát trực tiếp trên thẻ `<video>`.
 
 ---
 
@@ -208,9 +209,9 @@ Python
 ### Bước 4: Khắc phục lỗi Giai đoạn 4 (Tối ưu hóa luồng Video chống Gateway Timeout & Lỗi Codec)
 1. **Chuyển sang Sync (Threadpool):** Đổi `detect_video` sang `def` đồng bộ, đọc file nhị phân bằng `file.file.read()`.
 2. **Bổ sung `expose_headers`:** Khai báo đầy đủ `X-Total-Detections`, `X-Detected-Classes`, `X-Duration-Seconds` vào CORS Middleware để Frontend hiển thị số liệu và xuất file CSV chuẩn xác.
-3. **Auto Downscaling Video:** Tự động co khung hình video về tối đa **360px** (kích thước chẵn), đưa thời gian xử lý từ 11.5 phút xuống còn **~6–8 giây**.
-4. **Chuẩn hóa Codec:** Đổi FourCC sang **`avc1` (H.264)** có cơ chế fallback `mp4v` tự động, giúp video phát được trực tiếp trên trình duyệt web.
-5. **Cơ chế Graceful Degradation (Phòng vệ tài nguyên):** Khống chế xử lý tối đa 45 khung hình (~1.5 giây), hệ thống chủ động cắt gọn dữ liệu để bảo vệ CPU đám mây không bị tràn timeout.
+3. **Auto Downscaling Video:** Tự động co khung hình video về tối đa **320px** (khớp với `imgsz=320` của YOLO), đưa thời gian xử lý từ 11.5 phút xuống còn **~5–7 giây**.
+4. **Khắc phục rào cản Codec bằng UX:** Do môi trường Headless thiếu `libx264`, hệ thống xuất file chuẩn `mp4v` và bổ sung nút **"Tải Video"** trực tiếp trên Frontend để người dùng tải về máy mở xem bằng VLC/Windows Media Player.
+5. **Cơ chế Graceful Degradation (Phòng vệ tài nguyên):** Khống chế xử lý tối đa **30 khung hình (~1.0 giây)**, bảo vệ CPU đám mây tuyệt đối không chạm trần timeout 50 giây.
 
 ## 5. Nghiệm Thu & Kiểm Thử Sau Bản Vá (Verification)
 
@@ -231,9 +232,9 @@ Sau khi toàn bộ 4 giai đoạn được xử lý và kích hoạt hoàn chỉ
 ![Suy luận ảnh thành công trên Cloud hiển thị Bounding Box và mã 200 OK](images/Screenshot_2026-10-26_185423.png)
 
 ### Nghiệm thu 3: Kiểm thử suy luận video ngắn và xuất dữ liệu (Khắc phục Giai đoạn 4)
-- **Thời gian xử lý & Tỷ lệ phản hồi:** Tải clip MP4 ngắn (khống chế 45 frames): Máy chủ hoàn tất xử lý trong ~6–8 giây, phản hồi mã `200 OK`, triệt tiêu hoàn toàn hiện tượng treo 49 giây văng 502.
-- **Trình phát video trực tiếp (Playback):** Video trả về nén bằng FourCC `avc1` phát được ngay trên trình duyệt Chrome/Edge với đầy đủ bounding box gán nhãn chuyển động, không còn hiện tượng đen màn hình hay kẹt ở `0:00`.
-- **Hiển thị số liệu & Xuất CSV:** Giao diện hiển thị đầy đủ các thông số `Detections`, `Duration`, `Detected Classes`. Khi bấm nút **Export CSV**, hệ thống xuất thành công tệp bảng tính với danh sách phân loại và số lượng vật thể chuẩn xác.
+- **Thời gian xử lý & Tỷ lệ phản hồi:** Tải clip MP4 ngắn (khống chế 30 frames): Máy chủ hoàn tất xử lý trong **~5–7 giây**, phản hồi mã `200 OK`, triệt tiêu hoàn toàn hiện tượng treo 49 giây văng 502.
+- **Trình phát video trực tiếp & Tải tệp:** Cung cấp nút tải trực tiếp file video nhị phân để xem trên hệ điều hành với đầy đủ 32 bounding box, khắc phục triệt để hạn chế không giải mã được `mp4v` của trình duyệt.
+- **Hiển thị số liệu & Xuất CSV:** Giao diện hiển thị đầy đủ các thông số `Detections (32)`, `Duration (1.0s)`, `Detected Classes (suitcase, truck, car, person, airplane)`. Nút **Export CSV** xuất file bảng tính chuẩn xác.
 
 ## 6. Bài Học Kinh Nghiệm & Phòng Ngừa (Prevention)
 
@@ -242,5 +243,3 @@ Sau khi toàn bộ 4 giai đoạn được xử lý và kích hoạt hoàn chỉ
 - Nguyên tắc tiền xử lý dữ liệu đầu vào (Input Sanitization & Downscaling): Không bao giờ đưa nguyên mẫu dữ liệu đa phương tiện kích thước lớn vào mô hình AI khi chạy trên môi trường hạn chế tài nguyên.
 - Hiểu rõ giới hạn hạ tầng Cloud (Cloud Quotas & Timeouts): Các nền tảng Serverless/PaaS như Render luôn có timeout ngầm ở tầng Reverse Proxy (\~50s). Không bao giờ duy trì kết nối HTTP đồng bộ cho các tác vụ xử lý video dài.
 - Định hướng mở rộng kiến trúc: Với các tác vụ nặng như video dài, kiến trúc chuẩn bắt buộc phải chuyển đổi sang mô hình xử lý bất đồng bộ sử dụng hàng đợi tác vụ (Task Queue như Celery + Redis) kết hợp cơ chế Polling hoặc Server-Sent Events (SSE) để tách biệt luồng nhận tệp và luồng tính toán.
-```
-```

@@ -71,7 +71,7 @@ Hệ thống được thiết kế theo mô hình Microservices tách biệt gi�
 ## 3. Tính năng Nổi bật (Features)
 
 - **Nhận diện ảnh đa định dạng:** Hỗ trợ JPG, JPEG, PNG; tự động tiền xử lý kích thước bảo vệ tài nguyên (tối đa 640px), trả về danh sách đối tượng, độ tin cậy và ảnh Base64 có vẽ bounding box.
-- **Xử lý video ngắn tối ưu:** Tiếp nhận video MP4, tự động co khung hình về 360p để CPU xử lý siêu tốc trong ~6–8s, nén theo chuẩn web `avc1` (H.264), khống chế an toàn 45 frames (~1.5s).
+- **Xử lý video ngắn tối ưu:** Tiếp nhận video MP4, tự động co khung hình về 320p để CPU xử lý siêu tốc trong ~5–7s, khống chế an toàn 30 frames (~1.0s), hỗ trợ tải trực tiếp file kết quả về máy.
 - **Điều chỉnh ngưỡng tin cậy (Confidence Control):** Thanh trượt trực quan cho phép lọc vật thể theo độ tin cậy từ 0.05 đến 1.0.
 - **Bộ lọc lớp & Xuất báo cáo (Summary & CSV Export):** Hiển thị tổng số lượng từng loại đối tượng phát hiện được và hỗ trợ xuất báo cáo định dạng CSV đầy đủ qua `expose_headers`.
 - **Cơ chế gỡ lỗi phân tán (Traceability):** Tự động tạo và đính kèm `X-Request-ID` xuyên suốt từ Frontend qua Middleware đến Logger của Backend.
@@ -190,7 +190,7 @@ Backend API ghi nhận nhật ký nghiệp vụ dưới định dạng chuẩn h
    │
    └── [Nấc 4]: Video xử lý mất 11.5 phút / chạm trần timeout 49s, video đen màn hình, CSV rỗng?
         └── Nguyên nhân: Video 1080p quá nặng cho vCPU; codec mp4v không chạy trên web; CORS thiếu expose_headers.
-        └── Xử lý: Resize video về tối đa 360px (kích thước chẵn), chuyển FourCC sang avc1, giới hạn 45 frames và mở toàn bộ expose_headers.
+        └── Xử lý: Resize video về tối đa 320px (kích thước chẵn), xuất FourCC mp4v kèm nút tải trực tiếp, giới hạn 30 frames và mở toàn bộ expose_headers.
 ```
 
 ---
@@ -201,7 +201,7 @@ Backend API ghi nhận nhật ký nghiệp vụ dưới định dạng chuẩn h
 - **Hạ tầng đám mây (Render Free Tier):** Vận hành trên CPU chia sẻ, không có GPU chuyên dụng; bộ nhớ RAM bị giới hạn khắt khe ở mức 512 MB và không có bộ nhớ Swap.
 - **Cơ chế tiền xử lý bảo vệ tài nguyên (Auto Pre-resizing):** Ảnh tải lên tự động được tối ưu cạnh lớn nhất về 640px bằng thuật toán LANCZOS trước khi suy luận, giúp giải phóng mảng tensor khổng lồ và triệt tiêu nguy cơ quá tải bộ nhớ.
 - **Thời gian khởi động lạnh (Cold Start):** Dịch vụ tự động tạm dừng sau 15 phút không có lượt truy cập, mất khoảng 30–50 giây để tái khởi động ở lần truy cập kế tiếp.
-- **Giới hạn tệp tin:** Hình ảnh tối đa 10 MB; video tối đa 5 MB, tự động co về 360p và giới hạn xử lý 45 khung hình (~1.5 giây) để tránh quá thời gian chờ (request timeout).
+- **Giới hạn tệp tin:** Hình ảnh tối đa 10 MB; video tối đa 5 MB, tự động co về 320p và giới hạn xử lý 30 khung hình (~1.0 giây) để tránh quá thời gian chờ (request timeout).
 
 ### Định hướng mở rộng trong tương lai
 - [ ] Tích hợp hàng đợi tác vụ bất đồng bộ (Celery + Redis) để xử lý video dung lượng dài mà không chặn HTTP response.

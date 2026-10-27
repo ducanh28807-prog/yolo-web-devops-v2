@@ -34,7 +34,7 @@ def get_env_int(key: str, default: int) -> int:
 
 MAX_IMAGE_SIZE_MB = get_env_int("MAX_UPLOAD_SIZE_MB", 10)
 MAX_VIDEO_SIZE_MB = get_env_int("MAX_VIDEO_SIZE_MB", 5)
-MAX_VIDEO_FRAMES = 45  # Khống chế 45 frames (~1.5s) để xử lý trong 6-8s, chống timeout Render
+MAX_VIDEO_FRAMES = 30  # Khống chế 30 frames (~1.0s) để xử lý siêu tốc ~5-7s, chống timeout Render
 
 def cleanup_files(*file_paths: str):
     """Hàm dọn dẹp file tạm chạy ngầm"""
@@ -310,8 +310,8 @@ def detect_video(
     orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 
-    # Ép chiều rộng về tối đa 360px để xử lý nhanh trong 6-8s
-    MAX_VIDEO_DIM = 360
+    # Ép chiều rộng về tối đa 320px để xử lý nhanh trong 5-7s
+    MAX_VIDEO_DIM = 320
     if orig_w > MAX_VIDEO_DIM:
         target_w = MAX_VIDEO_DIM
         target_h = int(orig_h * (MAX_VIDEO_DIM / orig_w))
@@ -323,12 +323,9 @@ def detect_video(
     target_w = target_w - (target_w % 2)
     target_h = target_h - (target_h % 2)
 
-    # Dùng FourCC avc1 (H.264) để phát được trực tiếp trên trình duyệt
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    # Môi trường Docker Linux không có libx264, xuất trực tiếp bằng mp4v
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
-    if not out.isOpened():
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
 
     summary_counts: Dict[str, int] = {}
     detected_classes = set()
@@ -341,7 +338,7 @@ def detect_video(
             if not ret or frame_count >= MAX_VIDEO_FRAMES:
                 break
 
-            # Co nhỏ frame về 360p trước khi inference và ghi file
+            # Co nhỏ frame về 320p trước khi inference và ghi file
             if (orig_w, orig_h) != (target_w, target_h):
                 frame = cv2.resize(frame, (target_w, target_h))
 
