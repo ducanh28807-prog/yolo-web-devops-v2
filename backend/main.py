@@ -199,6 +199,12 @@ def detect_image(
         image = Image.open(io.BytesIO(image_bytes))
         image.verify()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        
+        # BẢO VỆ TÀI NGUYÊN: Giới hạn cạnh lớn nhất về 640px
+        # Tránh bung mảng numpy thô quá lớn làm sập RAM 512MB và nghẽn CPU tính toán
+        MAX_DIM = 640
+        if max(image.size) > MAX_DIM:
+            image.thumbnail((MAX_DIM, MAX_DIM), Image.Resampling.LANCZOS)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
