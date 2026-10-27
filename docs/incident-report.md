@@ -28,12 +28,15 @@ Sự cố diễn ra theo chuỗi logic kỹ thuật "Khắc phục lỗi trướ
 - **Bối cảnh:** Sau khi chuyển hàm `detect_image` sang `def` đồng bộ (Threadpool), kiểm thử với ảnh nhỏ (~31KB - 100KB) chạy rất mượt (913ms, mã 200 OK).
 - **Triệu chứng mới phát sinh:** Khi người dùng tải ảnh chụp thực tế từ điện thoại (dung lượng > 500KB, độ phân giải gốc 12MP), request lại rơi vào tình trạng quay vòng chờ đợi rồi báo máy chủ không phản hồi (502 Bad Gateway), trong khi các ảnh nhẹ hơn vẫn phản hồi bình thường.
 
-### Giai đoạn 4 (Ngày 27/10/2026): Chạm trần Gateway Timeout (49.06s) khi xử lý Video ngắn
+### Giai đoạn 4 (Ngày 27/10/2026): Chạm trần Gateway Timeout, Lỗi Codec Video và Rỗng File CSV
 - **Bối cảnh:** Sau khi tối ưu tiền xử lý ảnh thành công, tiến hành kiểm thử tính năng nhận diện video MP4 theo yêu cầu đề cương.
-- **Triệu chứng mới phát sinh:** Khi tải lên một video MP4 ngắn 5 giây dung lượng ~5MB, giao diện hiển thị trạng thái xử lý kéo dài đúng **49.06 giây**, sau đó DevTools Network ghi nhận request văng lỗi **`502 Bad Gateway`** và giao diện hiện thông báo:
-   > `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ: Failed to fetch (Mã yêu cầu: N/A)`
+- **Triệu chứng phát sinh:** 
+  1. Khi tải video MP4 gốc 1080p, request kéo dài đúng **49.06 giây** thì Reverse Proxy của Render ngắt kết nối và văng lỗi `502 Bad Gateway / Failed to fetch`.
+  2. Ở lần chạy khác không bị timeout, request xử lý mất tới **11.5 phút**, file video trả về bị đen xì, player kẹt ở `0:00` không phát được trực tiếp trên web.
+  3. Giao diện hiển thị `Detections N/A`, `Duration N/A`, và khi bấm `Export CSV` thì file tải về bị rỗng dữ liệu thống kê do thiếu expose headers.
 
 ![Bằng chứng tab Network ghi nhận request video bị ngắt sau 49.06 giây với mã lỗi 502](images/Screenshot_2026-10-27_112900.png)
+![Bằng chứng tab Network request kéo dài 11.5 phút và video không xem được](images/Screenshot_2026-10-27_181224.png)
 
 ---
 
@@ -202,34 +205,35 @@ Python
         )
 ```
 
-### Bước 4: Khắc phục lỗi Giai đoạn 4 (Tối ưu hóa luồng Video chống Gateway Timeout)
-
-1. Chuyển hàm `detect_video` từ `async def` sang `def` thường để chạy trên Threadpool riêng, đọc file bằng cú pháp đồng bộ `file.file.read()`.
-2. Khống chế giới hạn số khung hình `MAX_VIDEO_FRAMES = 60` (khoảng 2 – 2.5 giây clip ở 24–30fps) để tổng thời gian suy luận trên CPU chỉ tốn khoảng 15 giây, an toàn tuyệt đối dưới ngưỡng ngắt kết nối 50 giây của Render.
+### Bước 4: Khắc phục lỗi Giai đoạn 4 (Tối ưu hóa luồng Video chống Gateway Timeout & Lỗi Codec)
+1. **Chuyển sang Sync (Threadpool):** Đổi `detect_video` sang `def` đồng bộ, đọc file nhị phân bằng `file.file.read()`.
+2. **Bổ sung `expose_headers`:** Khai báo đầy đủ `X-Total-Detections`, `X-Detected-Classes`, `X-Duration-Seconds` vào CORS Middleware để Frontend hiển thị số liệu và xuất file CSV chuẩn xác.
+3. **Auto Downscaling Video:** Tự động co khung hình video về tối đa **360px** (kích thước chẵn), đưa thời gian xử lý từ 11.5 phút xuống còn **~6–8 giây**.
+4. **Chuẩn hóa Codec:** Đổi FourCC sang **`avc1` (H.264)** có cơ chế fallback `mp4v` tự động, giúp video phát được trực tiếp trên trình duyệt web.
+5. **Cơ chế Graceful Degradation (Phòng vệ tài nguyên):** Khống chế xử lý tối đa 45 khung hình (~1.5 giây), hệ thống chủ động cắt gọn dữ liệu để bảo vệ CPU đám mây không bị tràn timeout.
 
 ## 5. Nghiệm Thu & Kiểm Thử Sau Bản Vá (Verification)
 
 Sau khi toàn bộ 4 giai đoạn được xử lý và kích hoạt hoàn chỉnh trên môi trường Cloud Render:
 
 ### Nghiệm thu 1: Kiểm thử tệp sai định dạng (Khắc phục Giai đoạn 1)
-
 - Tải lên tệp ảnh `.webp`: Máy chủ từ chối với mã `400 Bad Request`.
-- Giao diện UI hiển thị chính xác thông báo nghiệp vụ kèm mã tương quan thực tế:`Upload Error: Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG. (Mã yêu cầu: req-e06c4eb1)`
+- Giao diện UI hiển thị chính xác thông báo nghiệp vụ kèm mã tương quan thực tế: `Upload Error: Tệp tải lên bị hỏng hoặc định dạng 'image/webp' không được hỗ trợ. Chỉ chấp nhận JPG, JPEG, PNG. (Mã yêu cầu: req-e06c4eb1)`
 
-![Giao diện bắt lỗi định dạng 400 kèm Request ID chính xác]\\(images/Screenshot 2026-10-26 185437.jpg)
+![Giao diện bắt lỗi định dạng 400 kèm Request ID chính xác](images/Screenshot_2026-10-26_185437.png)
 
 ### Nghiệm thu 2: Kiểm thử suy luận ảnh hợp lệ và ảnh độ phân giải cao (Khắc phục Giai đoạn 2 & 3)
-
 - Người dùng tải lên ảnh chụp thực tế từ điện thoại dung lượng lớn (> 500KB, 12MP).
 - Hệ thống tự động thu nhỏ về 640px, tab Network ghi nhận endpoint `/api/detect/image` phản hồi mã `200 OK` thành công.
 - Giao diện hiển thị ảnh kết quả `Annotated (YOLOv8)` có đầy đủ các hộp nhận diện chính xác: `person 0.94` và `person 0.89`.
 - Trạng thái duy trì ổn định `Backend: ONLINE`, không còn hiện tượng container bị restart hay văng lỗi 502.
 
-![Suy luận ảnh thành công trên Cloud hiển thị Bounding Box và mã 200 OK]\\(images/Screenshot 2026-10-26 185423.jpg)
+![Suy luận ảnh thành công trên Cloud hiển thị Bounding Box và mã 200 OK](images/Screenshot_2026-10-26_185423.png)
 
-### Nghiệm thu 3: Kiểm thử suy luận video ngắn (Khắc phục Giai đoạn 4)
-
-\- Tải clip MP4 ngắn (dưới 60 frames): Máy chủ hoàn tất xử lý trong \~15 giây, phản hồi mã `200 OK` và giao diện tải về video đã vẽ bounding box mượt mà, triệt tiêu hoàn toàn hiện tượng treo 49 giây văng 502.
+### Nghiệm thu 3: Kiểm thử suy luận video ngắn và xuất dữ liệu (Khắc phục Giai đoạn 4)
+- **Thời gian xử lý & Tỷ lệ phản hồi:** Tải clip MP4 ngắn (khống chế 45 frames): Máy chủ hoàn tất xử lý trong ~6–8 giây, phản hồi mã `200 OK`, triệt tiêu hoàn toàn hiện tượng treo 49 giây văng 502.
+- **Trình phát video trực tiếp (Playback):** Video trả về nén bằng FourCC `avc1` phát được ngay trên trình duyệt Chrome/Edge với đầy đủ bounding box gán nhãn chuyển động, không còn hiện tượng đen màn hình hay kẹt ở `0:00`.
+- **Hiển thị số liệu & Xuất CSV:** Giao diện hiển thị đầy đủ các thông số `Detections`, `Duration`, `Detected Classes`. Khi bấm nút **Export CSV**, hệ thống xuất thành công tệp bảng tính với danh sách phân loại và số lượng vật thể chuẩn xác.
 
 ## 6. Bài Học Kinh Nghiệm & Phòng Ngừa (Prevention)
 
