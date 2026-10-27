@@ -190,7 +190,7 @@ Backend API ghi nhận nhật ký nghiệp vụ dưới định dạng chuẩn h
    │
    └── [Nấc 4]: Video xử lý mất 11.5 phút / chạm trần timeout 49s, video đen màn hình, CSV rỗng?
         └── Nguyên nhân: Video 1080p quá nặng cho vCPU; codec mp4v không chạy trên web; CORS thiếu expose_headers.
-        └── Xử lý: Resize video về tối đa 320px (kích thước chẵn), chuyển FourCC sang avc1, giới hạn 30 frames và mở toàn bộ expose_headers.
+        └── Xử lý: Resize video về tối đa 320px (kích thước chẵn), xuất FourCC mp4v kèm nút tải trực tiếp, giới hạn 30 frames và mở toàn bộ expose_headers.
 ```
 
 ---
