@@ -338,7 +338,7 @@ def detect_video(
             if not ret or frame_count >= MAX_VIDEO_FRAMES:
                 break
 
-            # Co nhỏ frame về 360p trước khi inference và ghi file
+            # Co nhỏ frame về 320p trước khi inference và ghi file
             if (orig_w, orig_h) != (target_w, target_h):
                 frame = cv2.resize(frame, (target_w, target_h))
 
