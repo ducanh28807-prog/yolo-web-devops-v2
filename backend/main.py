@@ -323,12 +323,9 @@ def detect_video(
     target_w = target_w - (target_w % 2)
     target_h = target_h - (target_h % 2)
 
-    # Dùng FourCC avc1 (H.264) để phát được trực tiếp trên trình duyệt
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    # Môi trường Docker Linux không có libx264, xuất trực tiếp bằng mp4v
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
-    if not out.isOpened():
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
 
     summary_counts: Dict[str, int] = {}
     detected_classes = set()
