@@ -34,7 +34,7 @@ def get_env_int(key: str, default: int) -> int:
 
 MAX_IMAGE_SIZE_MB = get_env_int("MAX_UPLOAD_SIZE_MB", 10)
 MAX_VIDEO_SIZE_MB = get_env_int("MAX_VIDEO_SIZE_MB", 5)
-MAX_VIDEO_FRAMES = 60  # Khống chế 60 frames (~2-2.5s) để xử lý trong ~15s, tránh chạm trần timeout 50s của Render
+MAX_VIDEO_FRAMES = 45  # Khống chế 45 frames (~1.5s) để xử lý trong 6-8s, chống timeout Render
 
 def cleanup_files(*file_paths: str):
     """Hàm dọn dẹp file tạm chạy ngầm"""
@@ -69,7 +69,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Summary-Counts", "X-Inference-Time-Ms", "X-Request-ID"]
+    expose_headers=[
+        "X-Summary-Counts",
+        "X-Inference-Time-Ms",
+        "X-Request-ID",
+        "X-Total-Detections",
+        "X-Detected-Classes",
+        "X-Duration-Seconds"
+    ]
 )
 
 # 2. Middleware cấp phát Request ID và ghi Structured Log an toàn
@@ -194,14 +201,13 @@ def detect_image(
             detail=f"Dung lượng ảnh ({file_size_mb}MB) vượt quá giới hạn cho phép (tối đa {MAX_IMAGE_SIZE_MB}MB). Vui lòng chọn ảnh nhẹ hơn."
         )
 
-    # 3. Xác thực cấu trúc ảnh & chuẩn hóa dải màu RGB
+    # 3. Xác thực cấu trúc ảnh, chuẩn hóa dải màu RGB và tự động tối ưu kích thước
     try:
         image = Image.open(io.BytesIO(image_bytes))
         image.verify()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        # BẢO VỆ TÀI NGUYÊN: Giới hạn cạnh lớn nhất về 640px
-        # Tránh bung mảng numpy thô quá lớn làm sập RAM 512MB và nghẽn CPU tính toán
+        # BẢO VỆ TÀI NGUYÊN: Giới hạn cạnh lớn nhất về 640px để tránh tràn RAM 512MB
         MAX_DIM = 640
         if max(image.size) > MAX_DIM:
             image.thumbnail((MAX_DIM, MAX_DIM), Image.Resampling.LANCZOS)
@@ -254,7 +260,7 @@ def detect_image(
         "request_id": req_id
     }
 
-# Sử dụng def thường (Threadpool) thay vì async def để không phong tỏa Event Loop khi xử lý video
+# Sử dụng def thường (Threadpool) để không phong tỏa Event Loop khi xử lý video
 @app.post("/api/detect/video")
 def detect_video(
     request: Request,
@@ -273,7 +279,7 @@ def detect_video(
             detail=f"Tệp tải lên bị hỏng hoặc định dạng '{file.content_type}' không được hỗ trợ. Chỉ chấp nhận video MP4."
         )
 
-    # 2. Kiểm tra dung lượng video (Đọc file nhị phân đồng bộ)
+    # 2. Kiểm tra dung lượng video (Đọc đồng bộ)
     contents = file.file.read()
     file_size_mb = round(len(contents) / (1024 * 1024), 2)
     if file_size_mb > MAX_VIDEO_SIZE_MB:
@@ -300,12 +306,29 @@ def detect_video(
         cleanup_files(input_path, output_path)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tệp tải lên bị hỏng: Không thể mở tệp video.")
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    # Ép chiều rộng về tối đa 360px để xử lý nhanh trong 6-8s
+    MAX_VIDEO_DIM = 360
+    if orig_w > MAX_VIDEO_DIM:
+        target_w = MAX_VIDEO_DIM
+        target_h = int(orig_h * (MAX_VIDEO_DIM / orig_w))
+    else:
+        target_w = orig_w
+        target_h = orig_h
+
+    # Kích thước khung hình bắt buộc phải là số chẵn
+    target_w = target_w - (target_w % 2)
+    target_h = target_h - (target_h % 2)
+
+    # Dùng FourCC avc1 (H.264) để phát được trực tiếp trên trình duyệt
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
+    if not out.isOpened():
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (target_w, target_h))
 
     summary_counts: Dict[str, int] = {}
     detected_classes = set()
@@ -317,6 +340,10 @@ def detect_video(
             ret, frame = cap.read()
             if not ret or frame_count >= MAX_VIDEO_FRAMES:
                 break
+
+            # Co nhỏ frame về 360p trước khi inference và ghi file
+            if (orig_w, orig_h) != (target_w, target_h):
+                frame = cv2.resize(frame, (target_w, target_h))
 
             results = model.predict(source=frame, conf=threshold, imgsz=320, device="cpu", verbose=False)
             res = results[0]
