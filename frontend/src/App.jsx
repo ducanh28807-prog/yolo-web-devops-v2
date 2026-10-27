@@ -244,6 +244,18 @@ export default function App() {
                 )}
               </div>
 
+              <div className="flex items-center gap-2">
+              {activeTab === 'video' && result?.videoUrl && (
+                <a
+                  href={result.videoUrl}
+                  download="detected_video.mp4"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-indigo-900/30 transition-all cursor-pointer"
+                  title="Tải video kết quả về máy"
+                >
+                  <span>⬇️</span>
+                  <span>Tải Video</span>
+                </a>
+              )}
               <button
                 onClick={exportToCSV}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
@@ -253,6 +265,7 @@ export default function App() {
                 <span>Export CSV</span>
               </button>
             </div>
+          </div>
 
             {activeTab === 'image' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -267,7 +280,7 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-4">
-                <video src={result.videoUrl} controls className="w-full rounded-xl border border-slate-700 max-h-96" />
+                <video src={result.videoUrl} controls loop autoPlay muted className="w-full rounded-xl border border-slate-700 max-h-96" />
                 <div className="grid grid-cols-3 gap-2 text-center text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
                   <div>
                     <span className="text-slate-500 block">Detections</span>
