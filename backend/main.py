@@ -34,7 +34,7 @@ def get_env_int(key: str, default: int) -> int:
 
 MAX_IMAGE_SIZE_MB = get_env_int("MAX_UPLOAD_SIZE_MB", 10)
 MAX_VIDEO_SIZE_MB = get_env_int("MAX_VIDEO_SIZE_MB", 5)
-MAX_VIDEO_FRAMES = 45  # Khống chế 45 frames (~1.5s) để xử lý trong 6-8s, chống timeout Render
+MAX_VIDEO_FRAMES = 30  # Khống chế 30 frames (~1.0s) để xử lý siêu tốc ~5-7s, chống timeout Render
 
 def cleanup_files(*file_paths: str):
     """Hàm dọn dẹp file tạm chạy ngầm"""
@@ -310,8 +310,8 @@ def detect_video(
     orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
 
-    # Ép chiều rộng về tối đa 360px để xử lý nhanh trong 6-8s
-    MAX_VIDEO_DIM = 360
+    # Ép chiều rộng về tối đa 320px để xử lý nhanh trong 5-7s
+    MAX_VIDEO_DIM = 320
     if orig_w > MAX_VIDEO_DIM:
         target_w = MAX_VIDEO_DIM
         target_h = int(orig_h * (MAX_VIDEO_DIM / orig_w))
