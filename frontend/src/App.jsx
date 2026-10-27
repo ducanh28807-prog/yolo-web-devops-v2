@@ -245,27 +245,27 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2">
-              {activeTab === 'video' && result?.videoUrl && (
-                <a
-                  href={result.videoUrl}
-                  download="detected_video.mp4"
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-indigo-900/30 transition-all cursor-pointer"
-                  title="Tải video kết quả về máy"
+                {activeTab === 'video' && result?.videoUrl && (
+                  <a
+                    href={result.videoUrl}
+                    download="detected_video.mp4"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-indigo-900/30 transition-all cursor-pointer"
+                    title="Tải video kết quả về máy"
+                  >
+                    <span>⬇️</span>
+                    <span>Tải Video</span>
+                  </a>
+                )}
+                <button
+                  onClick={exportToCSV}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
+                  title="Tải báo cáo số liệu dạng bảng CSV"
                 >
-                  <span>⬇️</span>
-                  <span>Tải Video</span>
-                </a>
-              )}
-              <button
-                onClick={exportToCSV}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
-                title="Tải báo cáo số liệu dạng bảng CSV"
-              >
-                <span>📊</span>
-                <span>Export CSV</span>
-              </button>
+                  <span>📊</span>
+                  <span>Export CSV</span>
+                </button>
+              </div>
             </div>
-          </div>
 
             {activeTab === 'image' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -280,7 +280,22 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-4">
-                <video src={result.videoUrl} controls loop autoPlay muted className="w-full rounded-xl border border-slate-700 max-h-96" />
+                <div className="flex flex-col items-center justify-center p-8 bg-slate-900/60 border border-slate-700 rounded-xl text-center space-y-3">
+                  <div className="text-3xl">🎬</div>
+                  <h3 className="text-base font-semibold text-emerald-400">Xử lý Video thành công!</h3>
+                  <p className="text-xs text-slate-400 max-w-md">
+                    Do môi trường Cloud tối ưu hóa codec <code className="text-indigo-300">mp4v</code> để bảo vệ tài nguyên CPU, trình duyệt không phát trực tiếp. Vui lòng tải file về máy để xem kết quả bounding box.
+                  </p>
+                  <a
+                    href={result.videoUrl}
+                    download="detected_video.mp4"
+                    className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+                  >
+                    <span>⬇️</span>
+                    <span>Tải Video Kết Quả (.mp4)</span>
+                  </a>
+                </div>
+
                 <div className="grid grid-cols-3 gap-2 text-center text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
                   <div>
                     <span className="text-slate-500 block">Detections</span>
