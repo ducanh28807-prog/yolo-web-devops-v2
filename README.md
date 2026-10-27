@@ -70,10 +70,10 @@ Hệ thống được thiết kế theo mô hình Microservices tách biệt gi�
 
 ## 3. Tính năng Nổi bật (Features)
 
-- **Nhận diện ảnh đa định dạng:** Hỗ trợ JPG, JPEG, PNG; tự động tiền xử lý kích thước bảo vệ tài nguyên, trả về danh sách đối tượng, độ tin cậy và ảnh Base64 có vẽ bounding box.
-- **Xử lý video ngắn:** Tiếp nhận video MP4, xử lý từng khung hình và trả về file video đã gán nhãn kèm metadata trong Header phản hồi.
+- **Nhận diện ảnh đa định dạng:** Hỗ trợ JPG, JPEG, PNG; tự động tiền xử lý kích thước bảo vệ tài nguyên (tối đa 640px), trả về danh sách đối tượng, độ tin cậy và ảnh Base64 có vẽ bounding box.
+- **Xử lý video ngắn tối ưu:** Tiếp nhận video MP4, tự động co khung hình về 360p để CPU xử lý siêu tốc trong ~6–8s, nén theo chuẩn web `avc1` (H.264), khống chế an toàn 45 frames (~1.5s).
 - **Điều chỉnh ngưỡng tin cậy (Confidence Control):** Thanh trượt trực quan cho phép lọc vật thể theo độ tin cậy từ 0.05 đến 1.0.
-- **Bộ lọc lớp & Thống kê (Summary & Export):** Hiển thị tổng số lượng từng loại đối tượng phát hiện được và hỗ trợ xuất báo cáo định dạng CSV.
+- **Bộ lọc lớp & Xuất báo cáo (Summary & CSV Export):** Hiển thị tổng số lượng từng loại đối tượng phát hiện được và hỗ trợ xuất báo cáo định dạng CSV đầy đủ qua `expose_headers`.
 - **Cơ chế gỡ lỗi phân tán (Traceability):** Tự động tạo và đính kèm `X-Request-ID` xuyên suốt từ Frontend qua Middleware đến Logger của Backend.
 
 ---
@@ -184,9 +184,13 @@ Backend API ghi nhận nhật ký nghiệp vụ dưới định dạng chuẩn h
    │    └── Nguyên nhân: Hàm inference dùng `async def` làm nghẽn Event Loop khiến Render ping /ready bị timeout.
    │    └── Xử lý: Chuyển hàm sang `def` đồng bộ để FastAPI đưa tác vụ nặng vào Threadpool riêng.
    │
-   └── [Nấc 3]: Sửa xong Nấc 2, ảnh nhỏ chạy mượt nhưng ảnh > 500KB văng 502 / Máy chủ không phản hồi?
-        └── Nguyên nhân: Bung mảng pixel thô từ ảnh độ phân giải cao làm chạm trần RAM 512MB hoặc CPU tính toán quá lâu.
-        └── Xử lý: Áp dụng cơ chế tiền xử lý co kích thước ảnh về tối đa 640px trước khi suy luận.
+   ├── [Nấc 3]: Sửa xong Nấc 2, ảnh nhỏ chạy mượt nhưng ảnh > 500KB văng 502 / Máy chủ không phản hồi?
+   │    └── Nguyên nhân: Bung mảng pixel thô từ ảnh độ phân giải cao làm chạm trần RAM 512MB hoặc CPU tính toán quá lâu.
+   │    └── Xử lý: Áp dụng cơ chế tiền xử lý co kích thước ảnh về tối đa 640px trước khi suy luận.
+   │
+   └── [Nấc 4]: Video xử lý mất 11.5 phút / chạm trần timeout 49s, video đen màn hình, CSV rỗng?
+        └── Nguyên nhân: Video 1080p quá nặng cho vCPU; codec mp4v không chạy trên web; CORS thiếu expose_headers.
+        └── Xử lý: Resize video về tối đa 360px (kích thước chẵn), chuyển FourCC sang avc1, giới hạn 45 frames và mở toàn bộ expose_headers.
 ```
 
 ---
@@ -197,7 +201,7 @@ Backend API ghi nhận nhật ký nghiệp vụ dưới định dạng chuẩn h
 - **Hạ tầng đám mây (Render Free Tier):** Vận hành trên CPU chia sẻ, không có GPU chuyên dụng; bộ nhớ RAM bị giới hạn khắt khe ở mức 512 MB và không có bộ nhớ Swap.
 - **Cơ chế tiền xử lý bảo vệ tài nguyên (Auto Pre-resizing):** Ảnh tải lên tự động được tối ưu cạnh lớn nhất về 640px bằng thuật toán LANCZOS trước khi suy luận, giúp giải phóng mảng tensor khổng lồ và triệt tiêu nguy cơ quá tải bộ nhớ.
 - **Thời gian khởi động lạnh (Cold Start):** Dịch vụ tự động tạm dừng sau 15 phút không có lượt truy cập, mất khoảng 30–50 giây để tái khởi động ở lần truy cập kế tiếp.
-- **Giới hạn tệp tin:** Hình ảnh tối đa 10 MB; video tối đa 5 MB và giới hạn xử lý 150 khung hình (~5 giây) để tránh quá thời gian chờ (request timeout).
+- **Giới hạn tệp tin:** Hình ảnh tối đa 10 MB; video tối đa 5 MB, tự động co về 360p và giới hạn xử lý 45 khung hình (~1.5 giây) để tránh quá thời gian chờ (request timeout).
 
 ### Định hướng mở rộng trong tương lai
 - [ ] Tích hợp hàng đợi tác vụ bất đồng bộ (Celery + Redis) để xử lý video dung lượng dài mà không chặn HTTP response.
