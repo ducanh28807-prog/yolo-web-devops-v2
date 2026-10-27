@@ -243,4 +243,3 @@ Sau khi toàn bộ 4 giai đoạn được xử lý và kích hoạt hoàn chỉ
 - Nguyên tắc tiền xử lý dữ liệu đầu vào (Input Sanitization & Downscaling): Không bao giờ đưa nguyên mẫu dữ liệu đa phương tiện kích thước lớn vào mô hình AI khi chạy trên môi trường hạn chế tài nguyên.
 - Hiểu rõ giới hạn hạ tầng Cloud (Cloud Quotas & Timeouts): Các nền tảng Serverless/PaaS như Render luôn có timeout ngầm ở tầng Reverse Proxy (\~50s). Không bao giờ duy trì kết nối HTTP đồng bộ cho các tác vụ xử lý video dài.
 - Định hướng mở rộng kiến trúc: Với các tác vụ nặng như video dài, kiến trúc chuẩn bắt buộc phải chuyển đổi sang mô hình xử lý bất đồng bộ sử dụng hàng đợi tác vụ (Task Queue như Celery + Redis) kết hợp cơ chế Polling hoặc Server-Sent Events (SSE) để tách biệt luồng nhận tệp và luồng tính toán.
-```
