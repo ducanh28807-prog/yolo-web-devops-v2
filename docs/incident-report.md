@@ -33,7 +33,7 @@ Sự cố diễn ra theo chuỗi logic kỹ thuật "Khắc phục lỗi trướ
 - **Triệu chứng mới phát sinh:** Khi tải lên một video MP4 ngắn 5 giây dung lượng ~5MB, giao diện hiển thị trạng thái xử lý kéo dài đúng **49.06 giây**, sau đó DevTools Network ghi nhận request văng lỗi **`502 Bad Gateway`** và giao diện hiện thông báo:
    > `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ: Failed to fetch (Mã yêu cầu: N/A)`
 
-![Bằng chứng tab Network ghi nhận request video bị ngắt sau 49.06 giây với mã lỗi 502](images/Screenshot_video_timeout_502.png)
+![Bằng chứng tab Network ghi nhận request video bị ngắt sau 49.06 giây với mã lỗi 502](images/Screenshot_2026-10-27_112900.png)
 
 ---
 
