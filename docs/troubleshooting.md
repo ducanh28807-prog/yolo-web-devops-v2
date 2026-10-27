@@ -1,64 +1,62 @@
+# Hướng Dẫn Chẩn Đoán & Khắc Phục Sự Cố Tuần Tự (Sequential Troubleshooting Guide)
 
-# Hướng Dẫn Gỡ Lỗi & Cây Quyết Định (Troubleshooting Guide & Decision Tree)
-
-Tài liệu này định hình quy trình chuẩn đoán, cô lập và xử lý sự cố trong hệ thống YOLOv8 Vision Detection Platform, tuân thủ mô hình vận hành DevOps.
+Tài liệu này chuẩn hóa quy trình điều tra và xử lý sự cố trên nền tảng YOLO Web Platform theo mô hình leo thang 4 bước tuần tự (**Sequential Triage Flow**). Các lỗi được sắp xếp đúng theo thứ tự nhân quả: từ tầng giao tiếp mạng, tầng xử lý luồng, tầng tài nguyên phần cứng cho đến trạng thái nền tảng.
 
 ---
 
-## 1. Quy Trình Gỡ Lỗi Chuẩn 6 Bước (Standard 6-Step Workflow)
-
-Khi phát hiện bất kỳ sự cố nào từ giao diện hoặc hệ thống giám sát, kỹ sư thực hiện theo chu trình sau:
+## 1. Sơ Đồ Cây Chẩn Đoán Leo Thang (Sequential Triage Tree)
 
 ```text
-[1. Reproduce] -> [2. Collect Evidence] -> [3. Isolate Layer] -> [4. Fix] -> [5. Test] -> [6. Document]
+[BẮT ĐẦU: Phát hiện lỗi khi người dùng thao tác trên Web]
+   │
+   ▼
+[BƯỚC 1: Kiểm tra tầng Giao tiếp & Header CORS]
+   │── Triệu chứng: Console báo đỏ CORS, UI hiện "Mã yêu cầu: N/A".
+   │── Nguyên nhân: Exception Handler trả về thiếu header Access-Control-Allow-Origin.
+   │── Biện pháp: Đính kèm CORS headers và X-Request-ID trực tiếp trong http_exception_handler.
+   │── Đã đạt yêu cầu? ──► [CHUYỂN TIẾP SANG BƯỚC 2]
+   │
+   ▼
+[BƯỚC 2: Kiểm tra tầng Quản lý Luồng & Event Loop]
+   │── Triệu chứng: CORS đã chuẩn, nhưng khi gửi ảnh hợp lệ thì văng 502, Render restart container.
+   │── Nguyên nhân: Hàm inference dùng `async def` làm nghẽn Event Loop khiến Render ping /ready bị timeout.
+   │── Biện pháp: Đổi sang `def` đồng bộ để FastAPI tự động điều phối tác vụ sang Threadpool riêng.
+   │── Đã đạt yêu cầu? ──► [CHUYỂN TIẾP SANG BƯỚC 3]
+   │
+   ▼
+[BƯỚC 3: Kiểm tra tầng Bộ nhớ RAM & Độ phân giải Tệp tin]
+   │── Triệu chứng: Ảnh nhỏ (<100KB) chạy tốt, nhưng ảnh lớn (>500KB / ảnh 4K) bị treo hoặc văng 502.
+   │── Nguyên nhân: Bung mảng pixel thô từ ảnh lớn làm vọt quá ngưỡng RAM 512MB (OOM) hoặc quá tải CPU.
+   │── Biện pháp: Thêm bộ tiền xử lý `image.thumbnail((640, 640))` thu nhỏ ảnh trước khi đưa vào YOLO.
+   │── Đã đạt yêu cầu? ──► [CHUYỂN TIẾP SANG BƯỚC 4]
+   │
+   ▼
+[BƯỚC 4: Kiểm tra tầng Vòng đời Dịch vụ & Khởi động lạnh (Cold Start)]
+   │── Triệu chứng: Giao diện báo "Backend: OFFLINE" ngay khi vừa mở trang web.
+   │── Nguyên nhân: Gói Render Free Tier tự động tạm dừng (spin down) container sau 15 phút không có traffic.
+   └── Biện pháp: Chờ 30–50 giây để container thức dậy, hoặc truy cập trực tiếp /health để đánh thức dịch vụ.
 ```
 
-1. **Reproduce (Tái hiện lỗi):**
-   * Xác định chính xác các bước thao tác dẫn tới lỗi: định dạng file tải lên, dung lượng file, ngưỡng confidence, thiết bị/trình duyệt sử dụng.
-   * Đảm bảo lỗi có tính lặp lại (reproducible).
-
-2. **Collect Evidence (Thu thập bằng chứng):**
-   * **Client-side:** Mở Chrome DevTools (F12) $\rightarrow$ Tab **Console** (ghi nhận exception) $\rightarrow$ Tab **Network** (Status Code, Request/Response Headers, Response Payload).
-   * **Server-side (Render / Docker):** Lọc log theo `request_id`, kiểm tra các dòng log mức độ `[WARNING]` hoặc `[ERROR]`, độ trễ `latency_ms` và mức sử dụng tài nguyên (RAM/CPU).
-
-3. **Isolate Layer (Cô lập tầng lỗi):**
-   * Phân loại lỗi thuộc tầng nào:
-     * *Client/Network:* DNS, CORS policy, Mixed content HTTPS/HTTP.
-     * *Ingress/Gateway:* 502 Bad Gateway (Server đang khởi động lại hoặc Crash), 504 Gateway Timeout.
-     * *Application Validation:* 400 Bad Request (Sai định dạng file), 413 Payload Too Large (Vượt quá giới hạn dung lượng).
-     * *Inference/Runtime:* 500 Internal Server Error (OOM do thiếu RAM, lỗi nạp trọng số YOLO, lỗi OpenCV video writer).
-
-4. **Fix (Thực hiện bản vá):**
-   * Sửa chữa trên nhánh tính năng riêng biệt (`fix/...`).
-   * Không sửa trực tiếp trên production hoặc nhánh `main`.
-
-5. **Test (Kiểm thử):**
-   * Chạy lại test suite cục bộ (`pytest tests/`).
-   * Kiểm thử tích hợp từ giao diện người dùng cả trường hợp thành công (happy path) và trường hợp lỗi ngoại lệ (edge cases).
-
-6. **Document (Tài liệu hóa):**
-   * Ghi nhận lại nguyên nhân và cách khắc phục vào Incident Report để phục vụ việc chia sẻ kinh nghiệm và cải tiến hệ thống.
-
 ---
 
-## 2. Cây Quyết Định Gỡ Lỗi (Troubleshooting Decision Tree)
+## 2. Chi Tiết Các Kịch Bản Khắc Phục Theo Thứ Tự Leo Thang
 
-Sử dụng bảng tra cứu nhanh dưới đây để phản ứng nhanh với các triệu chứng thường gặp:
+### Nấc 1: Sự cố gãy liên kết mã định danh (CORS & Missing Request-ID)
+* **Hiện tượng:** Khi tải file không hợp lệ (ví dụ `.webp`), Console ghi nhận mã `400 Bad Request` từ backend nhưng giao diện người dùng lại báo `Upload Error: Đã xảy ra lỗi khi kết nối máy chủ. (Mã yêu cầu: N/A)`.
+* **Cách xác định:** Mở DevTools $\rightarrow$ tab Network $\rightarrow$ bấm vào request bị đỏ $\rightarrow$ kiểm tra mục Response Headers xem có dòng `Access-Control-Allow-Origin` hay không.
+* **Khắc phục:** Bổ sung dictionary headers đầy đủ vào `http_exception_handler` và cập nhật logic bóc tách `res.json()` tại React.
 
-| Triệu chứng quan sát | Tầng nghi vấn | Điểm kiểm tra (Evidence Checklist) | Hành động khắc phục |
-| :--- | :--- | :--- | :--- |
-| **Giao diện báo `Mã yêu cầu: N/A` & Console báo CORS error** | Network / CORS | 1. Header `Access-Control-Allow-Origin` có trong Response không?<br>2. Endpoint gây lỗi có trả về qua custom exception handler không? | Đính kèm header CORS tường minh vào `HTTPException` handler của FastAPI. Kiểm tra logic bóc tách `res.json()` tại frontend. |
-| **Console báo `502 Bad Gateway`** | Gateway / Cold Start | 1. Service trên Render có đang trong trạng thái khởi động lại (Rebooting) không?<br>2. Endpoint `/ready` đã trả về 200 OK chưa? | Đợi container khởi động xong (thường mất 30-60s với Render Free tier). Cấu hình probe kiểm tra `/ready` trước khi gửi request nặng. |
-| **Server trả mã `400 Bad Request`** | Validation | 1. Định dạng file có thuộc danh sách hỗ trợ không (JPG, JPEG, PNG, MP4)?<br>2. File header (magic bytes) có hợp lệ không? | Người dùng cần tải đúng định dạng file. Frontend cần rào trước định dạng file qua thuộc tính `accept` ở thẻ `<input>`. |
-| **Server trả mã `413 Payload Too Large`** | Validation / Cloud Limit | Dung lượng file tải lên có vượt ngưỡng cho phép (10MB cho ảnh, 5MB cho video) không? | Nén file hoặc giảm độ phân giải video trước khi gửi lên API. |
-| **Container bị restart đột ngột (Exit code 137)** | OS / Memory | Kiểm tra log Render xem có thông báo `Out of Memory (OOM)` hay không. | Giảm batch size, giảm độ phân giải xử lý frame, hoặc chuyển sang model gọn nhẹ hơn (`yolov8n.pt`). |
+### Nấc 2: Sự cố nghẽn luồng xử lý chính (Event Loop Blocking & 502 Bad Gateway)
+* **Hiện tượng:** Khắc phục xong Nấc 1, tải tệp ảnh hợp lệ thì trình duyệt chờ rất lâu rồi nhận mã `502 Bad Gateway`. Kiểm tra log Render thấy xuất hiện dòng `Starting server process [1]` (container bị khởi động lại).
+* **Cách xác định:** Kiểm tra khai báo endpoint: nếu là `async def detect_image(...)` mà bên trong chứa lệnh tính toán nặng `model.predict(...)` thì chính là nguyên nhân làm đứng Event Loop.
+* **Khắc phục:** Đổi định nghĩa hàm thành `def detect_image(...)` để kích hoạt cơ chế multi-threading ngầm của Starlette.
 
----
+### Nấc 3: Sự cố quá tải bộ nhớ do ảnh độ phân giải cao (Memory Spike & High-Res OOM)
+* **Hiện tượng:** Khắc phục xong Nấc 2, ảnh chụp nhẹ thử nghiệm chạy thành công trong 900ms, nhưng khi người dùng tải ảnh chụp từ camera điện thoại (dung lượng trên 500KB, kích thước 4000x3000) thì server lại bị đơ hoặc ngắt kết nối.
+* **Cách xác định:** Chạy thử nghiệm cục bộ với lệnh `podman run -m 512m` và kiểm tra dung lượng RAM khi chuyển đổi sang mảng RGB.
+* **Khắc phục:** Áp dụng phương thức `image.thumbnail((640, 640), Image.Resampling.LANCZOS)` ngay sau khi mở ảnh để khống chế kích thước ma trận pixel đầu vào.
 
-## 3. Vai Trò Của Mã `request_id` Correlation
-
-Hệ thống triển khai cơ chế sinh mã `request_id` (định dạng `req-xxxxxxxx`) duy nhất cho mỗi vòng đời request:
-1. Middleware backend tự động tạo hoặc đọc từ header `X-Request-ID`.
-2. Mọi dòng log phát sinh trong quá trình xử lý request đều mang con dấu `[req-xxxxxxxx]`.
-3. Khi xảy ra lỗi, `request_id` được trả về cả ở Header lẫn JSON Body để Frontend hiển thị lên banner thông báo cho người dùng.
-4. Kỹ sư vận hành chỉ cần copy mã này từ màn hình người dùng và tìm kiếm trực tiếp trên Render Logs để định vị chính xác dòng code bị sự cố trong vài giây.
+### Nấc 4: Xử lý trạng thái ngủ đông của hạ tầng Cloud (Platform Cold Start)
+* **Hiện tượng:** Giao diện vừa mở lên hiển thị ngay thanh thông báo đỏ `Backend: OFFLINE`.
+* **Cách xác định:** Mở trực tiếp đường link `[https://yolo-backend-cupu.onrender.com/health](https://yolo-backend-cupu.onrender.com/health)` trên tab mới. Nếu trình duyệt xoay vòng khoảng 30 giây rồi mới hiện `{"status": "healthy"}`, đó là hiện tượng Cold Start bình thường của Render Free Tier.
+* **Khắc phục:** Chờ container khởi động hoàn tất, giao diện React có cơ chế polling định kỳ sẽ tự động chuyển sang trạng thái xanh `Backend: ONLINE`.
