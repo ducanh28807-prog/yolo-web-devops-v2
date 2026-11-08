@@ -23,7 +23,7 @@ Trong suốt 7 tuần triển khai dự án, tôi đã trực tiếp đảm nh�
 3. **Triển khai Cloud & Chuyển dịch Kiến trúc Mạng (Week 5):**
    * Triển khai hệ thống lên hạ tầng đám mây Render Web Services (Docker runtime), quản lý bảo mật thông tin qua biến môi trường (Environment Variables)[cite: 1, 6].
    * **Chuyển đổi từ Local Proxy sang Cloud Static/Public API:** Khi đưa lên Cloud công cộng, không còn mạng nội bộ Docker chung giữa hai service[cite: 1, 4, 6]. Đã chuyển dịch kiến trúc: Frontend được build thành Static bundle độc lập, gọi trực tiếp ra **Public HTTPS URL** của Backend thông qua biến môi trường `VITE_API_BASE_URL`, đồng thời thiết lập chính sách CORS liên domain để trình duyệt cho phép giao tiếp an toàn[cite: 1, 4, 6].
-   * Tối ưu hóa suy luận: Giới hạn kích thước tensor đầu vào (`imgsz=320`), giới hạn video ngắn (tối đa 150 khung hình) để hệ thống vận hành bền bỉ trên môi trường CPU-only giới hạn khắt khe 512MB RAM[cite: 1, 6].
+   * Tối ưu hóa suy luận: Giới hạn kích thước tensor đầu vào (`imgsz=320`), giới hạn video ngắn (tối đa 30 khung hình) để hệ thống vận hành bền bỉ trên môi trường CPU-only giới hạn khắt khe 512MB RAM[cite: 1, 6].
 
 4. **Giám sát, Bóc tách log & Xử lý sự cố (Week 6 & Week 7):**
    * Triển khai chuẩn Structured Logging với con dấu truy vết `X-Request-ID` xuyên suốt từ Client qua Middleware đến Server[cite: 1, 7].
